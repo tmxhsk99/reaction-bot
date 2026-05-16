@@ -39,7 +39,7 @@ public class SpeechPrefilter {
             }
         }
 
-        // 봇 이름 + 호격 조사. 예: 클로디야, 클로디아, 클로디!, 클로디?, "클로디" 단독
+        // 봇 이름 + 호격 조사. 예: 리봇야, 리봇아, 리봇!, 리봇?, "리봇" 단독
         String name = Pattern.quote(character.getName());
         directAddressPattern = Pattern.compile(
                 "(^|[\\s,.!?])" + name + "(야|아|이|님)?[\\s,.!?]?",

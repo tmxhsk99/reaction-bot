@@ -16,6 +16,9 @@ build/
 out/
 !gradle/wrapper/gradle-wrapper.jar
 
+# Inno Setup 컴파일 부산물 (소스의 installer.iss는 git에 포함)
+installer/Output/
+
 # ===== Java =====
 *.class
 *.log

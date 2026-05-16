@@ -1,6 +1,6 @@
 # Reaction Bot
 
-방송하면서 내가 말하면 봇 캐릭터(기본 이름: **클로디**)가 화면을 보고 듣고 가끔 리액션해주는 시스템.
+방송하면서 내가 말하면 봇 캐릭터(기본 이름: **리봇**)가 화면을 보고 듣고 가끔 리액션해주는 시스템.
 
 ```
 [내 마이크] → Python STT 워커 (VAD + faster-whisper)
@@ -13,6 +13,33 @@
 ```
 
 STT 워커는 서버 기동 시 **자식 프로세스로 자동 실행**됩니다. 터미널 하나로 끝.
+
+---
+
+## 빠른 시작 (비개발자용)
+
+가장 간단한 방법: **인스톨러(.exe) 한 번 더블클릭**.
+
+1. GitHub Releases에서 `ReactionBot-Setup-x.x.x.exe` 다운로드
+2. **더블클릭** — 인스톨러가 자동으로:
+   - Java 21이 없으면 다운로드 + 설치
+   - Python 3이 없으면 다운로드 + 설치
+   - 필요한 Python 패키지(`numpy`, `faster-whisper`, `edge-tts` 등) pip install
+   - 앱 파일을 Program Files에 배치 + 시작 메뉴 단축키 생성
+3. 시작 메뉴 → **Reaction Bot 실행** → 5초 뒤 브라우저에 설정 페이지가 자동 열림
+4. **API 키 입력 + 저장**:
+   - Anthropic: https://console.anthropic.com/settings/keys ($5 충전)
+   - Azure Speech: https://portal.azure.com (Speech services, Free F0 — 월 50만 자 무료)
+5. 콘솔창 닫고 다시 시작 메뉴 → 실행 → 끝
+
+OBS 연동: 브라우저 소스 추가 → `http://localhost:8080/avatar`
+
+> **인스톨러 첫 실행 시 의존성 자동 설치 로그**: `%APPDATA%\ReactionBot\install.log` 에서 확인 가능.
+
+### 또는 zip 번들 (인스톨러 없이)
+가벼운 폴더 배치를 원하면 `reaction-bot-x.x.x-bundle.zip` 받아서 압축만 풀고 `start.bat` 실행. 이 경우 Java 21과 Python은 직접 설치 필요.
+
+기능 켜기/끄기, 음성 바꾸기 등은 모두 `http://localhost:8080/config` 에서 가능. 설정은 jar 옆 `config.yml`로 영구 저장됩니다.
 
 ---
 
@@ -70,7 +97,7 @@ faster-whisper는 처음 실행 시 모델을 자동 다운로드합니다 (`sma
 | `ANTHROPIC_API_KEY` | Claude API 키 (필수) | 없음 → 호출 시 401 |
 | `AZURE_SPEECH_KEY` | Azure Speech 리소스 키 (필수, TTS용) | 없음 → TTS 실패. 발급 방법은 §2.5 참고 |
 | `AZURE_SPEECH_REGION` | Azure Speech 리소스 region | `koreacentral` |
-| `BOT_NAME` | 봇 이름 | `클로디` |
+| `BOT_NAME` | 봇 이름 | `리봇` |
 | `STREAMER_NAME` | 스트리머 이름 | `로크만` |
 | `OBS_PASSWORD` | OBS WebSocket 비밀번호 | 없음 (OBS에 비번 안 걸어두면 OK) — 자세히는 §7 참고 |
 
@@ -151,6 +178,7 @@ Run/Debug Configurations → Spring Boot 설정 → **Environment variables**에
 
 ## 3. 실행
 
+### 개발 모드 (소스에서 직접)
 IntelliJ Run 버튼 또는:
 
 ```powershell
@@ -158,6 +186,9 @@ gradle bootRun
 ```
 
 이 한 번으로 **Spring Boot 서버 + STT 워커**가 같이 뜹니다.
+
+### 배포 빌드
+사용자 배포용 zip / 인스톨러 빌드 방법은 **§10 빌드 & 배포** 섹션 참고.
 
 정상 기동 로그 순서:
 ```
@@ -172,8 +203,8 @@ STT 워커 시작: python scripts/stt_worker.py --server-url ...
 ```
 [stt] 🎤 발화 감지
 [stt] 📝 발화 완료 (2.3s). STT 시작...
-[stt] 📝 STT 결과 (1.8s): '안녕 클로디야'
-STT 발화 수신: '안녕 클로디야'
+[stt] 📝 STT 결과 (1.8s): '안녕 리봇야'
+STT 발화 수신: '안녕 리봇야'
 Claude 호출. 메시지 수: 1, 이미지: true
 봇 raw 응답: 어 왔어? 오랜만이네 ㅋㅋ
 [stt] 📡 서버 응답: SPOKE | 어 왔어? 오랜만이네 ㅋㅋ
@@ -254,12 +285,15 @@ reaction-bot:
 | GET | `/api/status` | 현재 봇 발화 중인지 / 히스토리 턴 수 |
 | GET | `/api/avatar/events` | 아바타 페이지가 구독하는 SSE 스트림 (`speak_start` / `speak_end` 이벤트) |
 | GET | `/avatar/` | 아바타 HTML 페이지 (OBS Browser Source URL) |
+| GET | `/config/` | 사용자 설정 UI (API 키, 이름, 음성 등) |
+| GET | `/api/config` | 현재 설정 JSON (시크릿 마스킹) |
+| POST | `/api/config` | 설정 저장 (jar 옆 `config.yml`에 영구화) |
 
 수동 테스트:
 ```powershell
 curl.exe -X POST http://localhost:8080/api/react/speech `
   -H "Content-Type: application/json" `
-  -d '{"text":"안녕 클로디야 잘 보여?"}'
+  -d '{"text":"안녕 리봇야 잘 보여?"}'
 ```
 
 ---
@@ -481,7 +515,135 @@ reaction-bot:
 
 ---
 
-## 10. 고급 기능
+## 10. 빌드 & 배포
+
+개발자가 새 버전을 빌드해 GitHub Releases에 올리는 전체 흐름.
+
+### 10.1 빌드 명령 한눈에
+
+| 명령 | 산출물 | 크기 | 용도 |
+|---|---|---|---|
+| `gradle bootRun` | (없음, 그 자리에서 실행) | — | 개발 중 실행 |
+| `gradle bootJar` | `build/libs/reaction-bot-x.x.x.jar` | ~48MB | 실행 가능 fat JAR |
+| `gradle distBundle` | `build/distributions/reaction-bot-x.x.x-bundle.zip` | ~45MB | 압축 풀고 `start.bat` 실행 (Java/Python은 사용자가 직접 설치) |
+| `gradle distInstaller` | `build/distributions/ReactionBot-Setup-x.x.x.exe` | ~43MB | 더블클릭 인스톨러. Java/Python 자동 설치 + 시작메뉴 등록 |
+
+`distInstaller`가 `bootJar`를 의존해서 호출하므로 한 줄로 모두 빌드됨.
+
+### 10.2 사전 요건
+
+| 빌드 종류 | 필요 도구 |
+|---|---|
+| bootJar / bootRun / distBundle | JDK 21 만 있으면 OK |
+| distInstaller | + **Inno Setup 6** |
+
+Inno Setup 설치:
+```powershell
+winget install JRSoftware.InnoSetup
+```
+설치 위치: 보통 `%LOCALAPPDATA%\Programs\Inno Setup 6\`. Gradle 태스크가 자동 탐색합니다.
+
+### 10.3 인스톨러가 자동으로 처리하는 것
+`distInstaller`로 만든 `.exe` 인스톨러를 사용자가 더블클릭하면:
+
+1. **Java 21+ 감지** → 없으면 [Eclipse Adoptium](https://adoptium.net) MSI 다운로드 + silent install
+2. **Python 3.x 감지** → 없으면 [python.org](https://www.python.org) 인스톨러 다운로드 + silent install
+3. **pip 의존성 자동 설치**: `numpy`, `sounddevice`, `requests`, `faster-whisper`, `webrtcvad-wheels`, `edge-tts`
+4. **앱 파일 배치**: `C:\Program Files\ReactionBot\` (사용자 권한이면 `%LOCALAPPDATA%\Programs\ReactionBot\`)
+5. **시작 메뉴 등록**: `Reaction Bot 실행`, `설정 페이지 열기`, `사용자 가이드`, `제거`
+6. **(옵션) 바탕화면 아이콘**
+
+설치 로그: `%APPDATA%\ReactionBot\install.log` (Java/Python 감지/설치 결과 기록).
+
+### 10.4 버전 변경
+
+[build.gradle](build.gradle) 의 `version` 값 수정:
+```gradle
+version = '0.0.2-SNAPSHOT'   // ← 여기
+```
+
+그리고 [installer/installer.iss](installer/installer.iss) 의 `MyAppVersion` 도 같이:
+```
+#define MyAppVersion "0.0.2"
+```
+
+> 참고: `installer.iss` 에서 jar 파일명을 `reaction-bot-{#MyAppVersion}-SNAPSHOT.jar` 패턴으로 참조하므로 두 값이 일치해야 빌드됨.
+
+### 10.5 GitHub Releases 업로드 흐름
+
+```powershell
+# 1. 버전 올리고 빌드
+# (build.gradle / installer.iss 의 버전 두 군데 수정)
+gradle clean distBundle distInstaller
+
+# 2. 산출물 확인
+ls build/distributions/
+
+# 3. 태그 + push (예: v0.0.2)
+git add build.gradle installer/installer.iss
+git commit -m "Release v0.0.2"
+git tag v0.0.2
+git push origin main --tags
+
+# 4. GitHub Release 생성 (gh CLI)
+gh release create v0.0.2 `
+    --title "Reaction Bot v0.0.2" `
+    --notes "변경 내역 ..." `
+    build/distributions/ReactionBot-Setup-0.0.2.exe `
+    build/distributions/reaction-bot-0.0.2-SNAPSHOT-bundle.zip
+```
+
+웹 UI로도 가능: GitHub 리포 → **Releases → Draft a new release** → 태그 선택 → 두 파일 드래그 → Publish.
+
+### 10.6 인스톨러 커스터마이징
+
+[installer/installer.iss](installer/installer.iss) 의 주요 변수:
+
+| 변수 | 의미 |
+|---|---|
+| `MyAppName` | 표시 이름 ("Reaction Bot") |
+| `MyAppVersion` | 버전 |
+| `MyAppPublisher` | 게시자 (제어판에 표시) |
+| `MyAppURL` | 홈페이지 URL (제어판 링크) |
+| `DefaultDirName` | 설치 폴더 (`{autopf}` = Program Files, `{userpf}` = 사용자 폴더) |
+| `SetupIconFile` | 인스톨러 .exe 자체 아이콘 (`installer/icon.ico`) |
+| `[Tasks]` | 설치 옵션 체크박스 (예: 바탕화면 아이콘) |
+
+아이콘 변경: [installer/icon.ico](installer/icon.ico) 를 새 .ico 파일로 덮어쓰기. 다중 해상도(16×16, 32×32, 48×48, 256×256) 포함 권장. PNG → ICO 변환은 https://icoconvert.com 또는 ImageMagick으로.
+
+### 10.7 디지털 서명 (선택)
+
+서명 없이 배포하면 사용자가 인스톨러 실행 시 Windows SmartScreen 경고 (`Windows의 PC 보호`) → "자세히 → 실행" 클릭 필요.
+
+| 방법 | 비용 | SmartScreen 즉시 통과 |
+|---|---|---|
+| 미서명 | 무료 | ❌ (사용자가 우회 가능) |
+| 자체 서명 | 무료 | ❌ |
+| [SignPath Foundation](https://signpath.org) | 무료 (오픈소스만) | ❌ 점차 평판 빌드업 |
+| OV 코드사이닝 (Sectigo/SSL.com 등) | $200~400/년 | ❌ 평판 빌드업 필요 |
+| EV 코드사이닝 | $400~700/년 | ✅ 즉시 통과 (HW 토큰 필요) |
+
+서명 명령 (인증서 받은 후):
+```powershell
+signtool sign /f cert.pfx /p <비번> `
+    /tr http://timestamp.digicert.com /td sha256 /fd sha256 `
+    "build/distributions/ReactionBot-Setup-0.0.2.exe"
+```
+
+Inno Setup의 `SignTool` 디렉티브로 빌드 시 자동 서명도 가능.
+
+### 10.8 트러블슈팅
+
+| 증상 | 원인 / 해결 |
+|---|---|
+| `Inno Setup 6이 설치되어 있지 않습니다` | `winget install JRSoftware.InnoSetup` 후 재시도 |
+| 인스톨러 빌드 성공했는데 SmartScreen이 막음 | 미서명 상태. 사용자에게 "자세히 → 실행" 안내. 또는 §10.7 서명 |
+| 다른 PC에서 인스톨러 실행했는데 pip install이 실패 | `%APPDATA%\ReactionBot\install.log` 확인. 사내 네트워크에서 pip가 막혔을 가능성 (proxy 설정 필요) |
+| 인스톨러 안 jar 파일을 못 찾음 | `bootJar` 산출물 이름과 `installer.iss` 의 Source 경로 불일치. 버전 변경 시 §10.4 확인 |
+
+---
+
+## 11. 고급 기능
 
 ### 능동 발문 (Idle Trigger)
 스트리머가 한참 조용하면 봇이 먼저 가볍게 말을 걸거나 질문을 던집니다.
@@ -516,7 +678,7 @@ reaction-bot:
 
 비활성화: `enabled: false`.
 
-## 11. 다음 단계 아이디어
+## 12. 다음 단계 아이디어
 
 - VTube Studio + Live2D로 봇 시각화
 - 유튜브 채팅 연동 (시청자 멘션도 듣고 반응)
