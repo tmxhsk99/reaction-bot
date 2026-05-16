@@ -1,0 +1,152 @@
+package com.jhkim.reactionbot.service;
+
+import com.jhkim.reactionbot.config.BotProperties;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.yaml.snakeyaml.DumperOptions;
+import org.yaml.snakeyaml.Yaml;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 사용자가 UI(/config)에서 변경한 설정값을 jar 옆 config.yml에 영구화.
+ *
+ * - start.bat이 java 실행 시 --spring.config.additional-location=file:./config.yml 옵션을 주면
+ *   다음 기동 때 자동으로 머지됨 (override priority가 높음).
+ * - 화면에 보여줄 때는 비밀 값은 마스킹해서 반환.
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class UserConfigService {
+
+    private static final String FILE_NAME = "config.yml";
+
+    // UI에서 편집 가능한 키 (화이트리스트)
+    private static final List<String> EDITABLE_KEYS = List.of(
+            "reaction-bot.anthropic.api-key",
+            "reaction-bot.tts.provider",
+            "reaction-bot.tts.voice",
+            "reaction-bot.tts.azure.key",
+            "reaction-bot.tts.azure.region",
+            "reaction-bot.character.name",
+            "reaction-bot.character.streamer-name",
+            "reaction-bot.screen.source",
+            "reaction-bot.screen.obs.password",
+            "reaction-bot.idle-trigger.enabled",
+            "reaction-bot.stt.auto-start"
+    );
+
+    // 마스킹할 시크릿 키
+    private static final List<String> SECRET_KEYS = List.of(
+            "reaction-bot.anthropic.api-key",
+            "reaction-bot.tts.azure.key",
+            "reaction-bot.screen.obs.password"
+    );
+
+    private final BotProperties properties;
+
+    @Value("${user.dir:.}")
+    private String workingDir;
+
+    /** UI 표시용 — 현재 값(런타임 BotProperties 기준), 시크릿은 마스킹. */
+    public Map<String, Object> readForUi() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("reaction-bot.anthropic.api-key", maskSecret(safe(properties.getAnthropic().getApiKey())));
+        out.put("reaction-bot.tts.provider", safe(properties.getTts().getProvider()));
+        out.put("reaction-bot.tts.voice", safe(properties.getTts().getVoice()));
+        out.put("reaction-bot.tts.azure.key", maskSecret(safe(properties.getTts().getAzure().getKey())));
+        out.put("reaction-bot.tts.azure.region", safe(properties.getTts().getAzure().getRegion()));
+        out.put("reaction-bot.character.name", safe(properties.getCharacter().getName()));
+        out.put("reaction-bot.character.streamer-name", safe(properties.getCharacter().getStreamerName()));
+        out.put("reaction-bot.screen.source", safe(properties.getScreen().getSource()));
+        out.put("reaction-bot.screen.obs.password", maskSecret(safe(properties.getScreen().getObs().getPassword())));
+        out.put("reaction-bot.idle-trigger.enabled", properties.getIdleTrigger().isEnabled());
+        out.put("reaction-bot.stt.auto-start", properties.getStt().isAutoStart());
+        return out;
+    }
+
+    /** 사용자가 보낸 값을 받아 config.yml에 저장. 마스킹된 값(****)이 오면 무시(기존 유지). */
+    public synchronized Map<String, Object> write(Map<String, Object> incoming) throws IOException {
+        Path file = configFile();
+        Map<String, Object> existing = loadYaml(file);
+
+        for (Map.Entry<String, Object> e : incoming.entrySet()) {
+            String key = e.getKey();
+            Object value = e.getValue();
+            if (!EDITABLE_KEYS.contains(key)) continue;
+            if (value == null) continue;
+            // 마스킹된 그대로 들어온 경우 → 변경 의도 아님
+            if (value instanceof String s && (s.isEmpty() || s.matches("^\\*{2,}.*"))) continue;
+            setNested(existing, key, value);
+        }
+        saveYaml(file, existing);
+        log.info("config.yml 저장: {}", file.toAbsolutePath());
+        return Map.of("saved", file.toAbsolutePath().toString());
+    }
+
+    public Path configFile() {
+        return Paths.get(workingDir, FILE_NAME);
+    }
+
+    private static String safe(String s) { return s == null ? "" : s; }
+
+    private static String maskSecret(String s) {
+        if (s == null || s.isEmpty()) return "";
+        if (s.length() <= 4) return "****";
+        return "****" + s.substring(s.length() - 4);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> loadYaml(Path file) {
+        if (!Files.exists(file)) return new LinkedHashMap<>();
+        try (InputStream is = Files.newInputStream(file)) {
+            Yaml yaml = new Yaml();
+            Object loaded = yaml.load(is);
+            return loaded instanceof Map ? new LinkedHashMap<>((Map<String, Object>) loaded) : new LinkedHashMap<>();
+        } catch (Exception e) {
+            log.warn("config.yml 로드 실패 - 빈 맵으로 시작: {}", e.getMessage());
+            return new LinkedHashMap<>();
+        }
+    }
+
+    private static void saveYaml(Path file, Map<String, Object> map) throws IOException {
+        DumperOptions options = new DumperOptions();
+        options.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
+        options.setPrettyFlow(true);
+        options.setIndent(2);
+        Yaml yaml = new Yaml(options);
+        try (OutputStream os = Files.newOutputStream(file)) {
+            os.write(("# reaction-bot 사용자 설정. /config UI 에서 편집되거나 직접 수정 가능.\n"
+                    + "# Spring Boot 기동 시 --spring.config.additional-location=file:./config.yml 로 머지됨.\n")
+                    .getBytes());
+            yaml.dump(map, new java.io.OutputStreamWriter(os, java.nio.charset.StandardCharsets.UTF_8));
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void setNested(Map<String, Object> root, String dottedKey, Object value) {
+        String[] parts = dottedKey.split("\\.");
+        Map<String, Object> cur = root;
+        for (int i = 0; i < parts.length - 1; i++) {
+            Object next = cur.get(parts[i]);
+            if (!(next instanceof Map)) {
+                next = new LinkedHashMap<String, Object>();
+                cur.put(parts[i], next);
+            }
+            cur = (Map<String, Object>) next;
+        }
+        cur.put(parts[parts.length - 1], value);
+    }
+}

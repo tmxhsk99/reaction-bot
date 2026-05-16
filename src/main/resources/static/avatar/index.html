@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Avatar</title>
+<style>
+  /* 페이지 자체는 투명 (OBS Browser Source용). 배경 이미지가 있으면 그게 깔림. */
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* 배경 (assets/bg/bg.gif) - 화면 전체 채우고 캐릭터 뒤로 */
+  .bg {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;          /* 비율 유지하면서 영역 가득 */
+    z-index: 0;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+
+  /* 캐릭터 컨테이너 - 화면 중앙. OBS Browser Source 크기에 자동 맞춰짐(vmin).
+     이미지 원본은 1600x1600이고, OBS에서 그 어느 크기로 띄우든 정사각형 영역 가득 채움.
+     평소엔 좌우 흔들림 + 살짝 회전(살아있는 느낌), 말할 때는 위아래 진폭 큰 bob. */
+  .avatar {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100vmin;
+    height: 100vmin;
+    transform-origin: 50% 100%;     /* 발끝 기준 회전 → 머리만 좌우로 흔들리듯 */
+    z-index: 1;
+    animation: idle-sway 5s ease-in-out infinite;
+  }
+  .avatar.speaking {
+    animation: speak-bob 0.55s ease-in-out infinite;
+  }
+
+  .layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+
+  /* idle: 좌우 ±4px + ±1.2도 + 미세 위아래. 4박자 cycle로 자연스럽게 */
+  @keyframes idle-sway {
+    0%   { transform: translate(calc(-50% - 4px), calc(-50% + 0px))  rotate(-1.2deg); }
+    25%  { transform: translate(calc(-50% + 0px), calc(-50% - 3px))  rotate(0deg); }
+    50%  { transform: translate(calc(-50% + 4px), calc(-50% + 0px))  rotate(1.2deg); }
+    75%  { transform: translate(calc(-50% + 0px), calc(-50% - 3px))  rotate(0deg); }
+    100% { transform: translate(calc(-50% - 4px), calc(-50% + 0px))  rotate(-1.2deg); }
+  }
+
+  /* 말할 때: 더 활발한 위아래 bob (좌우는 살짝만) */
+  @keyframes speak-bob {
+    0%,100% { transform: translate(-50%, calc(-50% + 0px)) rotate(0deg); }
+    50%     { transform: translate(-50%, calc(-50% - 6px)) rotate(0deg); }
+  }
+</style>
+</head>
+<body>
+  <video class="bg" src="/bg/bg.mp4" autoplay loop muted playsinline></video>
+
+  <div class="avatar" id="avatar">
+    <img class="layer" src="/avatar/base.png" alt="">
+    <img class="layer" id="mouth" src="/avatar/mouth-closed.png" alt="">
+    <img class="layer" id="eye"   src="/avatar/eye-open.png"     alt="">
+  </div>
+
+<script>
+(() => {
+  const avatar = document.getElementById('avatar');
+  const mouthEl = document.getElementById('mouth');
+  const eyeEl   = document.getElementById('eye');
+
+  // --- 입 애니메이션 ---
+  const MOUTH_FRAMES = ['/avatar/mouth-closed.png', '/avatar/mouth-half.png', '/avatar/mouth-open.png', '/avatar/mouth-half.png'];
+  const MOUTH_FRAME_MS = 110;
+  let mouthIdx = 0;
+  let mouthTimer = null;
+
+  function startSpeaking() {
+    console.log('[avatar] startSpeaking');
+    if (mouthTimer) return;
+    avatar.classList.add('speaking');
+    mouthIdx = 0;
+    mouthTimer = setInterval(() => {
+      mouthIdx = (mouthIdx + 1) % MOUTH_FRAMES.length;
+      mouthEl.src = MOUTH_FRAMES[mouthIdx];
+    }, MOUTH_FRAME_MS);
+  }
+
+  function stopSpeaking() {
+    console.log('[avatar] stopSpeaking');
+    avatar.classList.remove('speaking');
+    if (mouthTimer) {
+      clearInterval(mouthTimer);
+      mouthTimer = null;
+    }
+    mouthEl.src = '/avatar/mouth-closed.png';
+  }
+
+  // --- 눈 깜박임 (open → half → closed → half → open) ---
+  // 평균 4~5초마다 한 번, 랜덤 jitter
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  async function blinkOnce() {
+    eyeEl.src = '/avatar/eye-half.png';   await sleep(50);
+    eyeEl.src = '/avatar/eye-closed.png'; await sleep(120);
+    eyeEl.src = '/avatar/eye-half.png';   await sleep(50);
+    eyeEl.src = '/avatar/eye-open.png';
+  }
+
+  async function blinkLoop() {
+    while (true) {
+      const wait = 3000 + Math.random() * 4000;  // 3~7초
+      await sleep(wait);
+      await blinkOnce();
+      // 가끔 더블 블링크
+      if (Math.random() < 0.15) {
+        await sleep(150);
+        await blinkOnce();
+      }
+    }
+  }
+  blinkLoop();
+
+  // --- SSE 연결 ---
+  function connectSSE() {
+    const es = new EventSource('/api/avatar/events');
+    es.onopen = () => console.log('[avatar] SSE open');
+    es.onmessage = (e) => console.log('[avatar] generic message', e.data);
+    es.addEventListener('hello', e => console.log('[avatar] hello', e.data));
+    es.addEventListener('speak_start', (e) => { console.log('[avatar] event=speak_start'); startSpeaking(); });
+    es.addEventListener('speak_end',   (e) => { console.log('[avatar] event=speak_end');   stopSpeaking(); });
+    es.onerror = (e) => {
+      console.warn('[avatar] SSE error - 자동 재연결 대기', e);
+    };
+  }
+  connectSSE();
+})();
+</script>
+</body>
+</html>

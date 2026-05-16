@@ -1,0 +1,15 @@
+# 이 파일을 gradle.properties 로 복사한 뒤 자기 환경에 맞게 수정하세요.
+# gradle.properties는 사용자별 경로라 git에 커밋되지 않습니다 (.gitignore).
+#
+# Windows 예시:
+# org.gradle.java.home=C:\\Program Files\\Eclipse Adoptium\\jdk-21.0.11.10-hotspot
+#
+# macOS 예시:
+# org.gradle.java.home=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home
+#
+# Linux 예시:
+# org.gradle.java.home=/usr/lib/jvm/temurin-21-jdk-amd64
+#
+# 시스템 JAVA_HOME이 이미 JDK 21을 가리키면 이 줄을 지워도 됩니다.
+
+org.gradle.java.home=

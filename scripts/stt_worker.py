@@ -1,0 +1,196 @@
+"""
+음성 트리거 워커.
+
+마이크에서 음성을 계속 듣다가 VAD(Voice Activity Detection)로 발화 한 덩어리를 잡고,
+faster-whisper로 텍스트 변환한 뒤 Spring Boot 서버에 POST.
+
+필수 설치:
+  pip install faster-whisper webrtcvad sounddevice numpy requests
+
+faster-whisper는 처음 실행 시 모델을 다운로드함 (small=~500MB, base=~140MB).
+
+마이크 디바이스 목록 보기:
+  python -c "import sounddevice; print(sounddevice.query_devices())"
+
+특정 마이크 지정:
+  python scripts/stt_worker.py --device-index 1
+
+사용 예시:
+  python scripts/stt_worker.py --model small --language ko
+"""
+import argparse
+import queue
+import sys
+import time
+from collections import deque
+
+import numpy as np
+import requests
+import sounddevice as sd
+import webrtcvad
+from faster_whisper import WhisperModel
+
+
+# 오디오 파라미터 (WebRTC VAD 요구사항: 8/16/32 kHz, 10/20/30 ms 프레임)
+SAMPLE_RATE = 16000
+FRAME_DURATION_MS = 30
+FRAME_SIZE = int(SAMPLE_RATE * FRAME_DURATION_MS / 1000)  # 480 샘플
+BYTES_PER_SAMPLE = 2  # int16
+
+
+class SpeechDetector:
+    """
+    VAD로 발화 시작/끝을 감지.
+    - 연속 N개 프레임이 voiced면 발화 시작
+    - 연속 M개 프레임이 silence면 발화 끝
+    """
+    def __init__(self, vad_aggressiveness: int = 2,
+                 start_voiced_frames: int = 8,    # 240ms 연속 voiced -> 시작
+                 end_silence_frames: int = 25):   # 750ms 연속 silence -> 끝
+        self.vad = webrtcvad.Vad(vad_aggressiveness)
+        self.start_voiced_frames = start_voiced_frames
+        self.end_silence_frames = end_silence_frames
+
+        self.is_speaking = False
+        self.voiced_window = deque(maxlen=start_voiced_frames)
+        self.silence_window = deque(maxlen=end_silence_frames)
+        # 발화 시작 직전의 작은 버퍼 (시작 직전 살짝 캡처)
+        self.pre_buffer = deque(maxlen=10)
+        self.current_utterance = []
+
+    def process_frame(self, frame_bytes: bytes):
+        """
+        한 프레임 처리. 발화 끝나면 완성된 PCM bytes 반환, 아니면 None.
+        """
+        is_voiced = self.vad.is_speech(frame_bytes, SAMPLE_RATE)
+
+        if not self.is_speaking:
+            self.pre_buffer.append(frame_bytes)
+            self.voiced_window.append(is_voiced)
+            # 시작 윈도우가 다 voiced면 발화 시작
+            if (len(self.voiced_window) == self.start_voiced_frames
+                    and all(self.voiced_window)):
+                self.is_speaking = True
+                self.current_utterance = list(self.pre_buffer)
+                self.silence_window.clear()
+                print("🎤 발화 감지", flush=True)
+            return None
+        else:
+            self.current_utterance.append(frame_bytes)
+            self.silence_window.append(is_voiced)
+            # 끝 윈도우가 다 silence면 발화 끝
+            if (len(self.silence_window) == self.end_silence_frames
+                    and not any(self.silence_window)):
+                self.is_speaking = False
+                utterance = b"".join(self.current_utterance)
+                self.current_utterance = []
+                self.voiced_window.clear()
+                self.pre_buffer.clear()
+                return utterance
+            return None
+
+
+def pcm_bytes_to_float32(pcm_bytes: bytes) -> np.ndarray:
+    """int16 PCM bytes -> float32 ndarray [-1, 1]."""
+    return np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+
+
+def post_to_server(server_url: str, text: str):
+    try:
+        r = requests.post(
+            f"{server_url}/api/react/speech",
+            json={"text": text},
+            timeout=60,
+        )
+        if r.ok:
+            data = r.json()
+            print(f"📡 서버 응답: {data.get('result')} | {data.get('botText') or ''}", flush=True)
+        else:
+            print(f"⚠️ 서버 응답 {r.status_code}: {r.text}", flush=True)
+    except Exception as e:
+        print(f"⚠️ 서버 호출 실패: {e}", flush=True)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--server-url", default="http://localhost:8080")
+    parser.add_argument("--model", default="small",
+                        help="faster-whisper 모델: tiny, base, small, medium, large-v3")
+    parser.add_argument("--language", default="ko")
+    parser.add_argument("--device-index", type=int, default=None,
+                        help="마이크 디바이스 인덱스. 안 주면 기본 입력")
+    parser.add_argument("--vad-aggressiveness", type=int, default=2,
+                        help="0(관대)~3(엄격). 게임 BGM 섞이면 3 추천")
+    parser.add_argument("--compute-type", default="int8",
+                        help="int8(CPU 빠름), float16(GPU), float32(정확)")
+    parser.add_argument("--device", default="cpu",
+                        help="cpu, cuda, auto. cuda는 NVIDIA cuBLAS 설치 필요")
+    args = parser.parse_args()
+
+    print(f"🤖 Whisper 모델 로딩: {args.model} ({args.compute_type}, device={args.device})", flush=True)
+    model = WhisperModel(args.model, device=args.device, compute_type=args.compute_type)
+    print("✅ 모델 로딩 완료", flush=True)
+
+    detector = SpeechDetector(vad_aggressiveness=args.vad_aggressiveness)
+    audio_queue: "queue.Queue[bytes]" = queue.Queue()
+
+    def audio_callback(indata, frames, time_info, status):
+        if status:
+            print(f"⚠️ 오디오 상태: {status}", file=sys.stderr, flush=True)
+        # int16 PCM bytes로 변환해서 큐에 넣음
+        pcm = (indata[:, 0] * 32767).astype(np.int16).tobytes()
+        audio_queue.put(pcm)
+
+    print(f"🎙️ 마이크 시작 (device={args.device_index})", flush=True)
+    stream = sd.InputStream(
+        samplerate=SAMPLE_RATE,
+        channels=1,
+        dtype="float32",
+        blocksize=FRAME_SIZE,
+        device=args.device_index,
+        callback=audio_callback,
+    )
+    stream.start()
+
+    try:
+        buffer = b""
+        while True:
+            chunk = audio_queue.get()
+            buffer += chunk
+            # FRAME_SIZE * BYTES_PER_SAMPLE 만큼씩 끊어서 VAD에 전달
+            frame_bytes_size = FRAME_SIZE * BYTES_PER_SAMPLE
+            while len(buffer) >= frame_bytes_size:
+                frame = buffer[:frame_bytes_size]
+                buffer = buffer[frame_bytes_size:]
+                utterance = detector.process_frame(frame)
+                if utterance is None:
+                    continue
+
+                # 발화 완성. Whisper에 보냄.
+                duration_sec = len(utterance) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+                print(f"📝 발화 완료 ({duration_sec:.1f}s). STT 시작...", flush=True)
+                start = time.time()
+                audio_float = pcm_bytes_to_float32(utterance)
+                segments, _ = model.transcribe(
+                    audio_float,
+                    language=args.language,
+                    beam_size=1,                # 속도 우선
+                    vad_filter=False,           # 이미 VAD 거침
+                    no_speech_threshold=0.6,
+                )
+                text = "".join(seg.text for seg in segments).strip()
+                elapsed = time.time() - start
+                print(f"📝 STT 결과 ({elapsed:.1f}s): '{text}'", flush=True)
+
+                if text:
+                    post_to_server(args.server_url, text)
+
+    except KeyboardInterrupt:
+        print("\n👋 종료", flush=True)
+    finally:
+        stream.stop()
+        stream.close()
+
+
+if __name__ == "__main__":
+    main()

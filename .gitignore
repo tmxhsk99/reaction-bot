@@ -1,0 +1,56 @@
+# ===== 비밀 / 사용자별 설정 =====
+# IntelliJ가 Run config 환경변수를 평문으로 저장하므로 절대 커밋 금지
+.idea/
+*.iml
+
+# 사용자별 JDK 경로
+gradle.properties
+
+# 환경변수 dump (혹시 만들 경우)
+.env
+.env.*
+
+# ===== Gradle / 빌드 산출물 =====
+.gradle/
+build/
+out/
+!gradle/wrapper/gradle-wrapper.jar
+
+# ===== Java =====
+*.class
+*.log
+hs_err_pid*
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+
+# ===== TTS 런타임 생성물 =====
+tts-output/
+
+# ===== Whisper 모델 캐시 (큰 파일들) =====
+# faster-whisper는 사용자 홈 디렉토리에 캐싱하므로 보통 문제없지만
+# 혹시 프로젝트 내에 떨어지면 무시
+models/
+*.bin
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== IDE 기타 =====
+.vscode/
+*.swp
+*~
+
+# ===== 배경 미디어 — 라이선스가 있는 파일은 git에 올리지 않음 =====
+# 사용자 본인의 자산만 assets/bg/ 에 두고 배경으로 활용.
+# 디렉터리 자체는 유지하되 미디어는 모두 제외.
+assets/bg/*
+!assets/bg/README.md
+!assets/bg/.gitkeep
