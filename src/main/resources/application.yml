@@ -88,8 +88,8 @@ reaction-bot:
   # 능동 발문 - 정적 시간이 길면 봇이 가끔 먼저 말 걸기
   idle-trigger:
     enabled: true
-    silence-threshold-ms: 120000    # 유저가 2분 이상 조용하면
-    min-since-bot-ms: 120000        # 봇이 마지막으로 말한지 2분 이상 지났어야
+    silence-threshold-ms: 60000    # 유저가 1분 이상 조용하면
+    min-since-bot-ms: 60000        # 봇이 마지막으로 말한지 1분 이상 지났어야
     check-interval-ms: 20000        # 스케줄러 20초마다 체크
 
   # 포켓몬 컨텍스트 - 발화에 포켓몬 이름 감지되면 PokeAPI에서 정보 받아와서 LLM에 주입
