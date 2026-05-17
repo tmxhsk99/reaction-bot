@@ -74,11 +74,6 @@ public class ReactionOrchestrator {
         }
         boolean directAddress = (decision == SpeechPrefilter.Decision.DIRECT_ADDRESS);
 
-        // 5) 쿨다운 — 호명된 경우는 무시 (사용자가 부르면 응답)
-        if (!directAddress && sinceEnd < properties.getSpeech().getCooldownMs()) {
-            log.debug("쿨다운 {}ms 중 (호명 아님). 컷: '{}'", sinceEnd, text);
-            return new ReactionOutcome(Result.COOLDOWN, null);
-        }
 
         // 6) 발화 처리 시작 (lock)
         if (!speaking.compareAndSet(false, true)) {
