@@ -78,6 +78,9 @@ reaction-bot:
     min-text-length: 2
     # 발화 사이 쿨다운 (봇이 한 번 말한 뒤 ms 동안 prefilter가 더 엄격)
     cooldown-ms: 8000
+    # 연속 N번 PASS 후 다음 호출에 "이번엔 반드시 응답" 힌트 자동 주입 (적극성 안전망)
+    # 0 이면 비활성. 권장: 2~3
+    nudge-after-pass-count: 3
     # 정규식 prefilter — 이 패턴 매칭하면 Claude 호출 자체를 안 함 (토큰 절약)
     # Java Pattern 문법. 발화 전체 문자열 대상.
     filler-patterns:

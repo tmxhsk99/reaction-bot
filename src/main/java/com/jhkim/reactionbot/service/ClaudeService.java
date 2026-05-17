@@ -56,6 +56,8 @@ public class ClaudeService {
     private final PokemonContextService pokemonContext;
 
     private AnthropicClient client;
+    // 연속 PASS 카운터 (적극성 안전망). triage·generate 둘 다 PASS면 증가, SPEAK면 0으로 리셋.
+    private final java.util.concurrent.atomic.AtomicInteger consecutivePassCount = new java.util.concurrent.atomic.AtomicInteger(0);
 
     @PostConstruct
     public void init() {
@@ -86,19 +88,30 @@ public class ClaudeService {
         List<MessageParam> messages = new ArrayList<>();
         messages.add(buildLastUserMessage(input, base64JpegImage));
 
+        // 연속 PASS가 누적되면 triage에도 SPEAK 쪽으로 기울게
+        String systemPrompt = TRIAGE_SYSTEM + buildNudge("triage");
+
         MessageCreateParams params = MessageCreateParams.builder()
                 .model(properties.getAnthropic().getTriageModel())
                 .maxTokens(10L)
-                .system(TRIAGE_SYSTEM)
+                .system(systemPrompt)
                 .messages(messages)
                 .build();
 
-        log.debug("Triage 호출 (Haiku). 이미지: {}", base64JpegImage != null);
+        log.debug("Triage 호출 (Haiku). 이미지: {}, 연속PASS: {}",
+                base64JpegImage != null, consecutivePassCount.get());
         Message response = client.messages().create(params);
         String raw = extractText(response).toUpperCase().replaceAll("[^A-Z]", "");
 
         boolean speak = raw.contains("SPEAK");
-        log.info("Triage 결과: {} (raw='{}')", speak ? "SPEAK" : "PASS", raw);
+        log.info("Triage 결과: {} (raw='{}', 연속PASS={})",
+                speak ? "SPEAK" : "PASS", raw, consecutivePassCount.get());
+
+        // triage가 PASS면 generate를 안 거치므로 여기서 카운터 증가.
+        // triage가 SPEAK여도 generate에서 PASS 뱉을 수 있으므로 그쪽에서 별도 갱신.
+        if (!speak) {
+            consecutivePassCount.incrementAndGet();
+        }
         return speak;
     }
 
@@ -120,6 +133,8 @@ public class ClaudeService {
             systemPrompt = systemPrompt + "\n\n" + pokemonCtx;
             log.debug("Pokemon 컨텍스트 주입됨");
         }
+        // 연속 PASS가 임계치 넘으면 강제 응답 힌트 추가
+        systemPrompt = systemPrompt + buildNudge("comment");
 
         List<MessageParam> messages = buildMessagesWithHistory(input, base64JpegImage);
 
@@ -141,11 +156,28 @@ public class ClaudeService {
         String normalized = raw.replaceAll("[.\"'\\s]", "").toUpperCase();
         if (normalized.equals("PASS") || normalized.isEmpty()) {
             removeLastUserTurn();
+            consecutivePassCount.incrementAndGet();
             return PASS;
         }
 
         history.addAssistant(raw);
+        consecutivePassCount.set(0);
         return raw;
+    }
+
+    /**
+     * 연속 PASS 카운트가 임계치 이상이면 system prompt 끝에 붙일 nudge 문자열 반환.
+     * 임계치 미달이거나 비활성이면 빈 문자열.
+     */
+    private String buildNudge(String mode) {
+        int threshold = properties.getSpeech().getNudgeAfterPassCount();
+        if (threshold <= 0) return "";
+        int streak = consecutivePassCount.get();
+        if (streak < threshold) return "";
+        if ("triage".equals(mode)) {
+            return "\n\n[강제 힌트] 직전 " + streak + "번 연속 PASS였음. 이번엔 SPEAK 쪽으로 판단해라.";
+        }
+        return "\n\n[강제 힌트] 직전 " + streak + "번 연속 PASS였음. 이번엔 반드시 한 마디 해. PASS 금지.";
     }
 
     private String extractText(Message response) {

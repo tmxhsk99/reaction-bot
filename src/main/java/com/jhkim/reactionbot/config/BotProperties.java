@@ -96,6 +96,7 @@ public class BotProperties {
         private int minTextLength;
         private int cooldownMs;
         private java.util.List<String> fillerPatterns = new java.util.ArrayList<>();
+        private int nudgeAfterPassCount;    // 연속 N번 PASS 시 다음 호출에 "응답하라" 힌트 주입. 0이면 비활성
     }
 
     @Getter @Setter
