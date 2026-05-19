@@ -24,6 +24,9 @@ dependencies {
     // Anthropic 공식 Java SDK
     implementation 'com.anthropic:anthropic-java:2.32.0'
 
+    // Google Gemini 공식 Java SDK
+    implementation 'com.google.genai:google-genai:1.53.0'
+
     // mp3 재생용
     implementation 'javazoom:jlayer:1.0.1'
 

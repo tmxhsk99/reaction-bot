@@ -8,14 +8,29 @@ reaction-bot:
     name: ${BOT_NAME:리봇}
     streamer-name: ${STREAMER_NAME:로크만}
 
+  # LLM provider 선택
+  # "anthropic" = Claude (Haiku triage + Sonnet 생성)
+  # "gemini"    = Gemini (Flash-Lite triage + Flash 생성, 더 저렴)
+  llm:
+    provider: anthropic
+
   # Claude API
   # 2단계 모델로 비용 절감:
   #  - triage-model: 매 발화마다 "지금 말할 만한가?" 1차 판단 (Haiku, 저렴)
   #  - model      : SPEAK 판정 났을 때 실제 코멘트 생성 (Sonnet, 고품질)
   anthropic:
-    api-key: ${ANTHROPIC_API_KEY}
+    api-key: ${ANTHROPIC_API_KEY:}
     model: claude-sonnet-4-6              # 코멘트 생성용
     triage-model: claude-haiku-4-5        # PASS 판단용 (cheap, 약 1/3 가격)
+    max-tokens: 200
+
+  # Gemini API (Google AI Studio 키)
+  # https://aistudio.google.com/apikey 에서 발급
+  # 같은 2단계 구조. thinking budget은 코드에서 0으로 강제 (단순 분류/리액션이라 추론 토큰 불필요).
+  gemini:
+    api-key: ${GEMINI_API_KEY:}
+    model: gemini-2.5-flash               # 코멘트 생성용
+    triage-model: gemini-2.5-flash-lite   # PASS 판단용 (cheapest)
     max-tokens: 200
 
   # 대화 히스토리

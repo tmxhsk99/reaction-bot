@@ -12,7 +12,9 @@ import org.springframework.context.annotation.Configuration;
 public class BotProperties {
 
     private Character character = new Character();
+    private Llm llm = new Llm();
     private Anthropic anthropic = new Anthropic();
+    private Gemini gemini = new Gemini();
     private History history = new History();
     private Tts tts = new Tts();
     private Stt stt = new Stt();
@@ -28,10 +30,24 @@ public class BotProperties {
     }
 
     @Getter @Setter
+    public static class Llm {
+        // "anthropic" 또는 "gemini" — 어느 provider를 활성화할지
+        private String provider = "anthropic";
+    }
+
+    @Getter @Setter
     public static class Anthropic {
         private String apiKey;
         private String model;            // 코멘트 생성용 (Sonnet)
         private String triageModel;      // PASS/SPEAK 1차 판단용 (Haiku) - 비용 절감
+        private int maxTokens;
+    }
+
+    @Getter @Setter
+    public static class Gemini {
+        private String apiKey;
+        private String model;            // 코멘트 생성용 (Flash)
+        private String triageModel;      // PASS/SPEAK 1차 판단용 (Flash-Lite)
         private int maxTokens;
     }
 
