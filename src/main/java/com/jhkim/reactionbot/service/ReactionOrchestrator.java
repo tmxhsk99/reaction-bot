@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicReference;
 @RequiredArgsConstructor
 public class ReactionOrchestrator {
 
-    private final ClaudeService claudeService;
+    private final LlmProvider llmProvider;
     private final TtsService ttsService;
     private final ScreenCaptureService screenCaptureService;
     private final AvatarEventService avatarEvents;
@@ -87,9 +87,9 @@ public class ReactionOrchestrator {
                 log.warn("화면 캡처 실패. 이미지 없이 진행.", e);
             }
 
-            // 7) Triage — 호명되지 않았으면 Haiku로 PASS/SPEAK 먼저 결정 (토큰 절약)
+            // 7) Triage — 호명되지 않았으면 저렴한 모델로 PASS/SPEAK 먼저 결정 (토큰 절약)
             if (!directAddress) {
-                boolean speak = claudeService.triage(text, base64Image);
+                boolean speak = llmProvider.triage(text, base64Image);
                 if (!speak) {
                     log.info("PASS by triage (입력: '{}')", text);
                     return new ReactionOutcome(Result.PASS, null);
@@ -98,9 +98,9 @@ public class ReactionOrchestrator {
                 log.info("호명 감지 - triage 건너뛰고 직행 (입력: '{}')", text);
             }
 
-            // 8) Sonnet으로 실제 코멘트 생성
-            String botText = claudeService.generateComment(text, base64Image);
-            if (ClaudeService.PASS.equals(botText) || botText == null || botText.isBlank()) {
+            // 8) 실제 코멘트 생성
+            String botText = llmProvider.generateComment(text, base64Image);
+            if (LlmProvider.PASS.equals(botText) || botText == null || botText.isBlank()) {
                 return new ReactionOutcome(Result.PASS, null);
             }
 
@@ -150,11 +150,11 @@ public class ReactionOrchestrator {
                 return new ReactionOutcome(Result.ERROR, null);
             }
 
-            // 능동 트리거 — Sonnet에게 "조용했음. 뭔가 한 마디 해 봐. 별거 없으면 PASS"
+            // 능동 트리거 — LLM에게 "조용했음. 뭔가 한 마디 해 봐. 별거 없으면 PASS"
             String triggerText = "(능동 트리거: 한참 조용했어. 화면 보고 가볍게 말 걸거나 질문 던져 봐. 별거 없으면 PASS)";
-            String botText = claudeService.generateComment(triggerText, base64Image);
+            String botText = llmProvider.generateComment(triggerText, base64Image);
 
-            if (ClaudeService.PASS.equals(botText) || botText == null || botText.isBlank()) {
+            if (LlmProvider.PASS.equals(botText) || botText == null || botText.isBlank()) {
                 log.info("Idle trigger PASS");
                 return new ReactionOutcome(Result.PASS, null);
             }

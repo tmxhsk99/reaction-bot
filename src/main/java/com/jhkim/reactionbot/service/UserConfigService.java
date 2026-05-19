@@ -35,7 +35,9 @@ public class UserConfigService {
 
     // UI에서 편집 가능한 키 (화이트리스트)
     private static final List<String> EDITABLE_KEYS = List.of(
+            "reaction-bot.llm.provider",
             "reaction-bot.anthropic.api-key",
+            "reaction-bot.gemini.api-key",
             "reaction-bot.tts.provider",
             "reaction-bot.tts.voice",
             "reaction-bot.tts.azure.key",
@@ -51,6 +53,7 @@ public class UserConfigService {
     // 마스킹할 시크릿 키
     private static final List<String> SECRET_KEYS = List.of(
             "reaction-bot.anthropic.api-key",
+            "reaction-bot.gemini.api-key",
             "reaction-bot.tts.azure.key",
             "reaction-bot.screen.obs.password"
     );
@@ -63,7 +66,9 @@ public class UserConfigService {
     /** UI 표시용 — 현재 값(런타임 BotProperties 기준), 시크릿은 마스킹. */
     public Map<String, Object> readForUi() {
         Map<String, Object> out = new LinkedHashMap<>();
+        out.put("reaction-bot.llm.provider", safe(properties.getLlm().getProvider()));
         out.put("reaction-bot.anthropic.api-key", maskSecret(safe(properties.getAnthropic().getApiKey())));
+        out.put("reaction-bot.gemini.api-key", maskSecret(safe(properties.getGemini().getApiKey())));
         out.put("reaction-bot.tts.provider", safe(properties.getTts().getProvider()));
         out.put("reaction-bot.tts.voice", safe(properties.getTts().getVoice()));
         out.put("reaction-bot.tts.azure.key", maskSecret(safe(properties.getTts().getAzure().getKey())));

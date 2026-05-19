@@ -14,23 +14,24 @@ import com.jhkim.reactionbot.config.CharacterConfig;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Claude API 호출.
- * 2단계 흐름:
- *   - triage(): Haiku로 PASS/SPEAK만 판단 (저렴)
- *   - generateComment(): Sonnet으로 실제 코멘트 생성
+ * Anthropic Claude 백엔드.
+ *   - triage(): Haiku로 PASS/SPEAK 판단
+ *   - generateComment(): Sonnet으로 코멘트 생성
+ *
+ * application.yml의 reaction-bot.llm.provider=anthropic (기본값)일 때만 빈 생성.
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class ClaudeService {
-
-    public static final String PASS = "__PASS__";
+@ConditionalOnProperty(prefix = "reaction-bot.llm", name = "provider", havingValue = "anthropic", matchIfMissing = true)
+public class ClaudeService implements LlmProvider {
 
     private static final String TRIAGE_SYSTEM = """
             당신은 스트리밍 코멘터리 봇의 판단기입니다.
@@ -54,10 +55,9 @@ public class ClaudeService {
     private final CharacterConfig character;
     private final ConversationHistory history;
     private final PokemonContextService pokemonContext;
+    private final PassCounter passCounter;
 
     private AnthropicClient client;
-    // 연속 PASS 카운터 (적극성 안전망). triage·generate 둘 다 PASS면 증가, SPEAK면 0으로 리셋.
-    private final java.util.concurrent.atomic.AtomicInteger consecutivePassCount = new java.util.concurrent.atomic.AtomicInteger(0);
 
     @PostConstruct
     public void init() {
@@ -71,15 +71,12 @@ public class ClaudeService {
                     .build();
             log.info("Anthropic 클라이언트: application.yml 키 사용");
         }
-        log.info("모델: comment={}, triage={}",
+        log.info("LLM provider=anthropic. 모델: comment={}, triage={}",
                 properties.getAnthropic().getModel(),
                 properties.getAnthropic().getTriageModel());
     }
 
-    /**
-     * Haiku로 PASS/SPEAK 판단만. 히스토리에 영향 없음.
-     * @return true=SPEAK, false=PASS
-     */
+    @Override
     public boolean triage(String userText, String base64JpegImage) {
         String input = (userText == null || userText.isBlank())
                 ? "(자동 트리거)"
@@ -88,8 +85,7 @@ public class ClaudeService {
         List<MessageParam> messages = new ArrayList<>();
         messages.add(buildLastUserMessage(input, base64JpegImage));
 
-        // 연속 PASS가 누적되면 triage에도 SPEAK 쪽으로 기울게
-        String systemPrompt = TRIAGE_SYSTEM + buildNudge("triage");
+        String systemPrompt = TRIAGE_SYSTEM + passCounter.buildNudge("triage");
 
         MessageCreateParams params = MessageCreateParams.builder()
                 .model(properties.getAnthropic().getTriageModel())
@@ -99,26 +95,21 @@ public class ClaudeService {
                 .build();
 
         log.debug("Triage 호출 (Haiku). 이미지: {}, 연속PASS: {}",
-                base64JpegImage != null, consecutivePassCount.get());
+                base64JpegImage != null, passCounter.get());
         Message response = client.messages().create(params);
         String raw = extractText(response).toUpperCase().replaceAll("[^A-Z]", "");
 
         boolean speak = raw.contains("SPEAK");
         log.info("Triage 결과: {} (raw='{}', 연속PASS={})",
-                speak ? "SPEAK" : "PASS", raw, consecutivePassCount.get());
+                speak ? "SPEAK" : "PASS", raw, passCounter.get());
 
-        // triage가 PASS면 generate를 안 거치므로 여기서 카운터 증가.
-        // triage가 SPEAK여도 generate에서 PASS 뱉을 수 있으므로 그쪽에서 별도 갱신.
         if (!speak) {
-            consecutivePassCount.incrementAndGet();
+            passCounter.increment();
         }
         return speak;
     }
 
-    /**
-     * Sonnet으로 실제 코멘트 생성. 히스토리에 추가됨.
-     * @return 봇 멘트 (PASS는 호출자가 prefilter/triage에서 이미 걸렀음)
-     */
+    @Override
     public String generateComment(String userText, String base64JpegImage) {
         String input = (userText == null || userText.isBlank())
                 ? "(자동 트리거. 한 마디 해 봐)"
@@ -126,15 +117,13 @@ public class ClaudeService {
 
         history.addUser(input);
 
-        // 발화에 포켓몬 이름이 있으면 PokeAPI에서 컨텍스트 받아와 system prompt에 append
         String systemPrompt = character.getSystemPrompt();
         String pokemonCtx = pokemonContext.buildContext(input);
         if (pokemonCtx != null) {
             systemPrompt = systemPrompt + "\n\n" + pokemonCtx;
             log.debug("Pokemon 컨텍스트 주입됨");
         }
-        // 연속 PASS가 임계치 넘으면 강제 응답 힌트 추가
-        systemPrompt = systemPrompt + buildNudge("comment");
+        systemPrompt = systemPrompt + passCounter.buildNudge("comment");
 
         List<MessageParam> messages = buildMessagesWithHistory(input, base64JpegImage);
 
@@ -152,32 +141,16 @@ public class ClaudeService {
         String raw = extractText(response).trim();
         log.info("봇 raw 응답: {}", raw);
 
-        // Sonnet도 가끔 PASS 뱉을 수 있음 (호명됐는데 무리한 케이스 등)
         String normalized = raw.replaceAll("[.\"'\\s]", "").toUpperCase();
         if (normalized.equals("PASS") || normalized.isEmpty()) {
             removeLastUserTurn();
-            consecutivePassCount.incrementAndGet();
+            passCounter.increment();
             return PASS;
         }
 
         history.addAssistant(raw);
-        consecutivePassCount.set(0);
+        passCounter.reset();
         return raw;
-    }
-
-    /**
-     * 연속 PASS 카운트가 임계치 이상이면 system prompt 끝에 붙일 nudge 문자열 반환.
-     * 임계치 미달이거나 비활성이면 빈 문자열.
-     */
-    private String buildNudge(String mode) {
-        int threshold = properties.getSpeech().getNudgeAfterPassCount();
-        if (threshold <= 0) return "";
-        int streak = consecutivePassCount.get();
-        if (streak < threshold) return "";
-        if ("triage".equals(mode)) {
-            return "\n\n[강제 힌트] 직전 " + streak + "번 연속 PASS였음. 이번엔 SPEAK 쪽으로 판단해라.";
-        }
-        return "\n\n[강제 힌트] 직전 " + streak + "번 연속 PASS였음. 이번엔 반드시 한 마디 해. PASS 금지.";
     }
 
     private String extractText(Message response) {
@@ -190,7 +163,6 @@ public class ClaudeService {
         List<MessageParam> result = new ArrayList<>();
         List<ConversationHistory.Turn> turns = history.snapshot();
 
-        // 과거 턴은 텍스트만
         for (int i = 0; i < turns.size() - 1; i++) {
             ConversationHistory.Turn turn = turns.get(i);
             result.add(MessageParam.builder()
