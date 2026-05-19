@@ -49,13 +49,17 @@ reaction-bot:
     auto-start: true                # false면 안 띄움 (개발 중 마이크 끄고 싶을 때)
     python-executable: "python"
     script-path: "scripts/stt_worker.py"
-    model: "small"                  # tiny, base, small, medium, large-v3
+    model: "small"                  # tiny, base, small, medium, large-v3 (medium↑ 한국어 정확도 큰폭 ↑)
     language: "ko"
     compute-type: "int8"            # int8(CPU 빠름), float16(GPU), float32(정확)
     device: "cpu"                   # cpu, cuda, auto. cuda는 NVIDIA cuBLAS 설치 필요
     vad-aggressiveness: 2           # 0(관대) ~ 3(엄격). BGM 섞이면 3
     device-index:                   # 빈 값이면 기본 마이크
     server-url: "http://localhost:8080"
+    beam-size: 5                    # 빔 서치 크기. 1=속도 우선, 5=권장(정확도↑), 10=느림
+    # pokemon-ko-en.json 의 포켓몬 이름은 SttWorkerRunner 가 자동으로 initial_prompt 에 주입.
+    # 여기엔 도메인 특화 추가 힌트만 적으면 됨 (방송용어/사람이름/자주 쓰는 문장 등). 빈 값이면 자동 주입만 사용.
+    initial-prompt: ""
 
   # 화면 캡처 (발화마다 같이 전송)
   screen:

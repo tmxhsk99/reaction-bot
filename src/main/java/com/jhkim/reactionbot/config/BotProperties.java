@@ -71,6 +71,8 @@ public class BotProperties {
         private int vadAggressiveness;
         private Integer deviceIndex;
         private String serverUrl;
+        private int beamSize;
+        private String initialPrompt;
     }
 
     @Getter @Setter

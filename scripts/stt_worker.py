@@ -19,10 +19,12 @@ faster-whisper는 처음 실행 시 모델을 다운로드함 (small=~500MB, bas
   python scripts/stt_worker.py --model small --language ko
 """
 import argparse
+import json
 import queue
 import sys
 import time
 from collections import deque
+from pathlib import Path
 
 import numpy as np
 import requests
@@ -95,6 +97,41 @@ def pcm_bytes_to_float32(pcm_bytes: bytes) -> np.ndarray:
     return np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
 
 
+def build_initial_prompt(prompt_file: str, extra_prompt: str) -> str:
+    """
+    Whisper initial_prompt 조립. 자주 등장하는 단어를 미리 알려주면 인식률이 올라간다.
+    - prompt_file: JSON. 객체면 키, 배열이면 원소를 단어 목록으로 사용. (밑줄로 시작하는 키는 메타로 보고 제외)
+    - extra_prompt: 사용자가 직접 넣는 추가 힌트 문자열.
+    """
+    parts: list[str] = []
+    if prompt_file:
+        path = Path(prompt_file)
+        if path.is_file():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    words = [k for k in data.keys() if not k.startswith("_")]
+                elif isinstance(data, list):
+                    words = [str(x) for x in data]
+                else:
+                    words = []
+                if words:
+                    parts.append(", ".join(words))
+                    print(f"📚 prompt-file 로드: {path.name} ({len(words)} 항목)", flush=True)
+            except Exception as e:
+                print(f"⚠️ prompt-file 로드 실패 ({path}): {e}", flush=True)
+        else:
+            print(f"⚠️ prompt-file 없음 (건너뜀): {path}", flush=True)
+    if extra_prompt:
+        parts.append(extra_prompt)
+    prompt = ". ".join(p for p in parts if p).strip()
+    # Whisper initial_prompt는 ~224 토큰 권장. 한국어 기준 대략 600자 이내로 자르면 안전.
+    if len(prompt) > 600:
+        prompt = prompt[:600]
+        print("⚠️ initial_prompt 너무 길어 600자로 잘라냄", flush=True)
+    return prompt
+
+
 def post_to_server(server_url: str, text: str):
     try:
         r = requests.post(
@@ -125,7 +162,17 @@ def main():
                         help="int8(CPU 빠름), float16(GPU), float32(정확)")
     parser.add_argument("--device", default="cpu",
                         help="cpu, cuda, auto. cuda는 NVIDIA cuBLAS 설치 필요")
+    parser.add_argument("--beam-size", type=int, default=5,
+                        help="빔 서치 크기. 1=속도 우선, 5=권장, 10=정확도 우선(느림)")
+    parser.add_argument("--initial-prompt", default="",
+                        help="Whisper에 미리 알려줄 단어/문장 (인식률↑). 예: 게임 용어, 사람 이름")
+    parser.add_argument("--prompt-file", default="",
+                        help="JSON 파일 경로. 객체면 키 목록, 배열이면 원소를 initial_prompt에 추가")
     args = parser.parse_args()
+
+    initial_prompt = build_initial_prompt(args.prompt_file, args.initial_prompt)
+    if initial_prompt:
+        print(f"📚 initial_prompt 활성 ({len(initial_prompt)}자)", flush=True)
 
     print(f"🤖 Whisper 모델 로딩: {args.model} ({args.compute_type}, device={args.device})", flush=True)
     model = WhisperModel(args.model, device=args.device, compute_type=args.compute_type)
@@ -174,9 +221,12 @@ def main():
                 segments, _ = model.transcribe(
                     audio_float,
                     language=args.language,
-                    beam_size=1,                # 속도 우선
+                    beam_size=args.beam_size,
                     vad_filter=False,           # 이미 VAD 거침
                     no_speech_threshold=0.6,
+                    initial_prompt=initial_prompt or None,
+                    condition_on_previous_text=False,  # 직전 출력 끌어와 hallucinate 하는 거 방지
+                    temperature=0.0,                    # 결정론적 디코딩
                 )
                 text = "".join(seg.text for seg in segments).strip()
                 elapsed = time.time() - start
