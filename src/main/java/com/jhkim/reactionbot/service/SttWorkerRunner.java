@@ -6,12 +6,17 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -53,6 +58,19 @@ public class SttWorkerRunner {
         if (stt.getDeviceIndex() != null) {
             cmd.add("--device-index"); cmd.add(String.valueOf(stt.getDeviceIndex()));
         }
+        if (stt.getBeamSize() > 0) {
+            cmd.add("--beam-size"); cmd.add(String.valueOf(stt.getBeamSize()));
+        }
+        if (stt.getInitialPrompt() != null && !stt.getInitialPrompt().isBlank()) {
+            cmd.add("--initial-prompt"); cmd.add(stt.getInitialPrompt());
+        }
+        // 포켓몬 이름 사전을 임시 파일로 풀어서 Whisper initial_prompt에 자동 주입.
+        // 배포 jar 안에 있어도 동작하도록 ClassPathResource 사용.
+        Path pokemonPromptFile = extractClasspathToTemp(
+                "pokemon-ko-en.json", "stt-prompt-pokemon-", ".json");
+        if (pokemonPromptFile != null) {
+            cmd.add("--prompt-file"); cmd.add(pokemonPromptFile.toString());
+        }
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.redirectErrorStream(true);
@@ -68,6 +86,29 @@ public class SttWorkerRunner {
         } catch (IOException e) {
             log.error("STT 워커 시작 실패. python 실행기({})와 스크립트 경로({})를 확인하세요.",
                     stt.getPythonExecutable(), stt.getScriptPath(), e);
+        }
+    }
+
+    /**
+     * 클래스패스 리소스를 임시 파일로 복사해서 경로를 반환. JVM 종료 시 자동 삭제.
+     * 배포 jar 안의 리소스를 외부 프로세스(파이썬)에 파일 경로로 전달하기 위함.
+     */
+    private Path extractClasspathToTemp(String resourceName, String prefix, String suffix) {
+        try {
+            ClassPathResource res = new ClassPathResource(resourceName);
+            if (!res.exists()) {
+                log.warn("클래스패스 리소스 없음 (건너뜀): {}", resourceName);
+                return null;
+            }
+            Path temp = Files.createTempFile(prefix, suffix);
+            try (InputStream in = res.getInputStream()) {
+                Files.copy(in, temp, StandardCopyOption.REPLACE_EXISTING);
+            }
+            temp.toFile().deleteOnExit();
+            return temp;
+        } catch (IOException e) {
+            log.warn("클래스패스 리소스 추출 실패 ({}): {}", resourceName, e.getMessage());
+            return null;
         }
     }
 
