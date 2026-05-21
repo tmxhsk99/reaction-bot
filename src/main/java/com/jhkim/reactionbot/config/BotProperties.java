@@ -89,6 +89,7 @@ public class BotProperties {
         private String serverUrl;
         private int beamSize;
         private String initialPrompt;
+        private Double minAvgLogprob;   // null이면 stt_worker.py 디폴트(-1.0) 사용
     }
 
     @Getter @Setter

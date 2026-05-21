@@ -75,6 +75,12 @@ reaction-bot:
     # pokemon-ko-en.json 의 포켓몬 이름은 SttWorkerRunner 가 자동으로 initial_prompt 에 주입.
     # 여기엔 도메인 특화 추가 힌트만 적으면 됨 (방송용어/사람이름/자주 쓰는 문장 등). 빈 값이면 자동 주입만 사용.
     initial-prompt: ""
+    # 세그먼트 평균 log-probability 최솟값.
+    # 컨트롤러 클릭/배경 노이즈처럼 비음성 입력에서 Whisper가 "찹찹찹", "스테이크스테이크" 같은
+    # hallucination을 뱉을 때 보통 -1.5 이하 값이 나옴. 이 임계치보다 낮으면 통째로 드롭.
+    #  -1.0 : 권장 (보수적)
+    #  -0.8 : 더 공격적 (정상 발화도 일부 컷될 수 있음)
+    min-avg-logprob: -1.0
 
   # 화면 캡처 (발화마다 같이 전송)
   screen:
