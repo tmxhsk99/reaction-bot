@@ -64,6 +64,9 @@ public class SttWorkerRunner {
         if (stt.getInitialPrompt() != null && !stt.getInitialPrompt().isBlank()) {
             cmd.add("--initial-prompt"); cmd.add(stt.getInitialPrompt());
         }
+        if (stt.getMinAvgLogprob() != null) {
+            cmd.add("--min-avg-logprob"); cmd.add(String.valueOf(stt.getMinAvgLogprob()));
+        }
         // 포켓몬 이름 사전을 임시 파일로 풀어서 Whisper initial_prompt에 자동 주입.
         // 배포 jar 안에 있어도 동작하도록 ClassPathResource 사용.
         Path pokemonPromptFile = extractClasspathToTemp(

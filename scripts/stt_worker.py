@@ -168,6 +168,9 @@ def main():
                         help="Whisper에 미리 알려줄 단어/문장 (인식률↑). 예: 게임 용어, 사람 이름")
     parser.add_argument("--prompt-file", default="",
                         help="JSON 파일 경로. 객체면 키 목록, 배열이면 원소를 initial_prompt에 추가")
+    parser.add_argument("--min-avg-logprob", type=float, default=-1.0,
+                        help="Whisper 세그먼트 avg_logprob 최솟값. 이보다 낮으면 hallucination으로 보고 드롭. "
+                             "비음성 노이즈에서 -1.5 이하가 흔함. 더 공격적 필터링 원하면 -0.8 권장.")
     args = parser.parse_args()
 
     initial_prompt = build_initial_prompt(args.prompt_file, args.initial_prompt)
@@ -228,12 +231,23 @@ def main():
                     condition_on_previous_text=False,  # 직전 출력 끌어와 hallucinate 하는 거 방지
                     temperature=0.0,                    # 결정론적 디코딩
                 )
-                text = "".join(seg.text for seg in segments).strip()
+                # 세그먼트 신뢰도 집계 — hallucination은 보통 avg_logprob가 매우 낮음
+                seg_list = list(segments)
+                text = "".join(s.text for s in seg_list).strip()
+                min_logprob = min(
+                    (s.avg_logprob for s in seg_list if s.avg_logprob is not None),
+                    default=0.0,
+                )
                 elapsed = time.time() - start
-                print(f"📝 STT 결과 ({elapsed:.1f}s): '{text}'", flush=True)
+                print(f"📝 STT 결과 ({elapsed:.1f}s, logprob={min_logprob:.2f}): '{text}'", flush=True)
 
-                if text:
-                    post_to_server(args.server_url, text)
+                if not text:
+                    continue
+                if min_logprob < args.min_avg_logprob:
+                    print(f"🚫 낮은 신뢰도 ({min_logprob:.2f} < {args.min_avg_logprob}) — hallucination으로 보고 드롭",
+                          flush=True)
+                    continue
+                post_to_server(args.server_url, text)
 
     except KeyboardInterrupt:
         print("\n👋 종료", flush=True)
