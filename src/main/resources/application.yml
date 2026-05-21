@@ -12,7 +12,7 @@ reaction-bot:
   # "anthropic" = Claude (Haiku triage + Sonnet 생성)
   # "gemini"    = Gemini (Flash-Lite triage + Flash 생성, 더 저렴)
   llm:
-    provider: anthropic
+    provider: gemini
 
   # Claude API
   # 2단계 모델로 비용 절감:
