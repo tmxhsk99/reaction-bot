@@ -13,9 +13,10 @@ public interface LlmProvider {
 
     /**
      * PASS/SPEAK 판단만. 히스토리에 영향 없음.
+     * 상용 API 비용 절감을 위해 1차 판단에는 이미지를 보내지 않고 텍스트만 사용.
      * @return true=SPEAK, false=PASS
      */
-    boolean triage(String userText, String base64JpegImage);
+    boolean triage(String userText);
 
     /**
      * 실제 코멘트 생성. 히스토리에 추가됨.

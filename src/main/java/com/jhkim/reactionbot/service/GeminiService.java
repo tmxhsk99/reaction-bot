@@ -34,7 +34,8 @@ public class GeminiService implements LlmProvider {
 
     private static final String TRIAGE_SYSTEM = """
             당신은 스트리밍 코멘터리 봇의 판단기입니다.
-            방금 스트리머가 한 말과 화면을 보고, 봇이 "지금 한 마디 해도 될 상황인가" 판단하세요.
+            방금 스트리머가 한 말(텍스트)만 보고, 봇이 "지금 한 마디 해도 될 상황인가" 판단하세요.
+            (비용 절감을 위해 1차 판단에는 화면 이미지가 제공되지 않습니다. 텍스트만으로 보수적으로 판단.)
             답은 정확히 SPEAK 또는 PASS 둘 중 하나. 다른 글자 절대 금지.
 
             SPEAK 기준:
@@ -75,7 +76,7 @@ public class GeminiService implements LlmProvider {
     }
 
     @Override
-    public boolean triage(String userText, String base64JpegImage) {
+    public boolean triage(String userText) {
         String input = (userText == null || userText.isBlank())
                 ? "(자동 트리거)"
                 : userText;
@@ -83,7 +84,10 @@ public class GeminiService implements LlmProvider {
         String systemPrompt = TRIAGE_SYSTEM + passCounter.buildNudge("triage");
 
         List<Content> contents = new ArrayList<>();
-        contents.add(buildUserContent(input, base64JpegImage));
+        contents.add(Content.builder()
+                .role("user")
+                .parts(List.of(Part.fromText(input)))
+                .build());
 
         GenerateContentConfig config = GenerateContentConfig.builder()
                 .systemInstruction(Content.fromParts(Part.fromText(systemPrompt)))
@@ -91,8 +95,7 @@ public class GeminiService implements LlmProvider {
                 .thinkingConfig(ThinkingConfig.builder().thinkingBudget(0).build())
                 .build();
 
-        log.debug("Triage 호출 (Gemini Flash-Lite). 이미지: {}, 연속PASS: {}",
-                base64JpegImage != null, passCounter.get());
+        log.debug("Triage 호출 (Gemini Flash-Lite, 텍스트 전용). 연속PASS: {}", passCounter.get());
         GenerateContentResponse response = client.models.generateContent(
                 properties.getGemini().getTriageModel(), contents, config);
         String raw = safeText(response).toUpperCase().replaceAll("[^A-Z]", "");
