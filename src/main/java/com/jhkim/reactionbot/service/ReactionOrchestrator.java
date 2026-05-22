@@ -80,24 +80,30 @@ public class ReactionOrchestrator {
             return new ReactionOutcome(Result.BUSY, null);
         }
         try {
-            // 7) Triage — 호명되지 않았으면 저렴한 모델로 PASS/SPEAK 먼저 결정 (토큰 절약)
+            // 7) Triage — provider가 분리 호출을 지원하고, 호명되지 않은 경우에만 저렴한 모델로 1차 판단.
             //    상용 API 비용 절감을 위해 1차 판단은 텍스트만으로 수행. 화면 캡처는 통과 후 지연.
-            if (!directAddress) {
+            //    로컬 LLM 같은 단일-호출 provider는 이 단계를 건너뛰고 generateComment에서 한 번에 처리.
+            if (llmProvider.hasSeparateTriage() && !directAddress) {
                 boolean speak = llmProvider.triage(text);
                 if (!speak) {
                     log.info("PASS by triage (입력: '{}')", text);
                     return new ReactionOutcome(Result.PASS, null);
                 }
-            } else {
+            } else if (directAddress) {
                 log.info("호명 감지 - triage 건너뛰고 직행 (입력: '{}')", text);
+            } else {
+                log.debug("provider 단일-호출 모드 - triage 생략 (입력: '{}')", text);
             }
 
-            // 8) 코멘트 생성 직전에 화면 캡처 (triage PASS 시 캡처 비용도 절약)
+            // 8) 코멘트 생성 직전에 화면 캡처 (triage PASS 시 캡처 비용도 절약).
+            //    text-only provider는 acceptsImage()=false라 캡처 자체를 건너뜀 (속도↑).
             String base64Image = null;
-            try {
-                base64Image = screenCaptureService.captureBase64Jpeg();
-            } catch (Exception e) {
-                log.warn("화면 캡처 실패. 이미지 없이 진행.", e);
+            if (llmProvider.acceptsImage()) {
+                try {
+                    base64Image = screenCaptureService.captureBase64Jpeg();
+                } catch (Exception e) {
+                    log.warn("화면 캡처 실패. 이미지 없이 진행.", e);
+                }
             }
 
             // 9) 실제 코멘트 생성
@@ -144,12 +150,15 @@ public class ReactionOrchestrator {
             return new ReactionOutcome(Result.BUSY, null);
         }
         try {
+            // text-only provider는 캡처를 건너뜀. vision provider는 캡처 실패 시 idle trigger 자체를 스킵.
             String base64Image = null;
-            try {
-                base64Image = screenCaptureService.captureBase64Jpeg();
-            } catch (Exception e) {
-                log.warn("Idle trigger 화면 캡처 실패. 스킵.", e);
-                return new ReactionOutcome(Result.ERROR, null);
+            if (llmProvider.acceptsImage()) {
+                try {
+                    base64Image = screenCaptureService.captureBase64Jpeg();
+                } catch (Exception e) {
+                    log.warn("Idle trigger 화면 캡처 실패. 스킵.", e);
+                    return new ReactionOutcome(Result.ERROR, null);
+                }
             }
 
             // 능동 트리거 — LLM에게 "조용했음. 뭔가 한 마디 해 봐. 별거 없으면 PASS"

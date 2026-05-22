@@ -1,0 +1,20 @@
+# 로컬 Ollama (self-host) 전용 설정.
+# application.yml의 spring.config.import 로 합쳐짐.
+#
+# 비용 무관이므로 1회 호출 모드로 동작 (triage 별도 호출 없음).
+# vision 토글:
+#   - true  : 화면 캡처 + payload에 base64 이미지 첨부 (qwen3-vl, qwen2.5vl 등 VL 모델)
+#   - false : 캡처도 생략 (qwen3 등 text-only 모델. 더 빠름)
+#
+# base-url 은 환경변수 OLLAMA_BASE_URL 로 덮어쓸 수 있음 (CI / 다른 PC에서 띄울 때).
+reaction-bot:
+  ollama:
+    base-url: ${OLLAMA_BASE_URL:http://192.168.0.8:11434}    # 내부망 다른 PC에서 Ollama 띄운 주소
+    model: qwen3-vl:8b                    # ollama pull 한 태그 (예: qwen3-vl:8b, qwen2.5vl:7b, qwen3:8b)
+    vision: true                          # VL 모델이면 true, text-only(qwen3 계열)면 false
+    max-tokens: 280                       # num_predict. 로컬은 비용 무관이라 약간 여유 줌
+    temperature: 0.9                      # 0.7=얌전, 0.9=다채로움, 1.0+=튐. 빈 값이면 모델 디폴트(~0.7)
+    top_p: 0.95                           # nucleus sampling. 빈 값이면 모델 디폴트
+    request-timeout-sec: 60
+    think: false                          # qwen3 thinking 모드. false=꺼서 응답 속도↑
+    assertive: true                       # true=로컬 전용 적극성 nudge 자동 주입 (PASS 줄이고 더 자주 말함)

@@ -15,6 +15,7 @@ public class BotProperties {
     private Llm llm = new Llm();
     private Anthropic anthropic = new Anthropic();
     private Gemini gemini = new Gemini();
+    private Ollama ollama = new Ollama();
     private History history = new History();
     private Tts tts = new Tts();
     private Stt stt = new Stt();
@@ -31,7 +32,7 @@ public class BotProperties {
 
     @Getter @Setter
     public static class Llm {
-        // "anthropic" 또는 "gemini" — 어느 provider를 활성화할지
+        // "anthropic" | "gemini" | "ollama" — 어느 provider를 활성화할지
         private String provider = "anthropic";
     }
 
@@ -49,6 +50,19 @@ public class BotProperties {
         private String model;            // 코멘트 생성용 (Flash)
         private String triageModel;      // PASS/SPEAK 1차 판단용 (Flash-Lite)
         private int maxTokens;
+    }
+
+    @Getter @Setter
+    public static class Ollama {
+        private String baseUrl = "http://localhost:11434";   // Ollama 서버 URL
+        private String model = "qwen3-vl:8b";                // 모델 태그 (예: qwen3, qwen3-vl:8b, qwen2.5vl:7b)
+        private int maxTokens = 280;                         // num_predict
+        private Double temperature;                          // null이면 모델 기본값 사용 (~0.7). 0.9 권장 (다양성↑)
+        private Double topP;                                 // null이면 모델 기본값. 0.95 권장
+        private int requestTimeoutSec = 60;                  // 응답 타임아웃
+        private boolean think = false;                       // qwen3 thinking 모드 (false=꺼서 속도↑)
+        private boolean vision = true;                       // true=화면 캡처+이미지 전송 (qwen3-vl/qwen2.5vl 등 VL 모델용)
+        private boolean assertive = true;                    // true=로컬 전용 적극성 nudge 자동 주입 (PASS 줄이고 더 말함)
     }
 
     @Getter @Setter

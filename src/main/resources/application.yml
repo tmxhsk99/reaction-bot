@@ -1,6 +1,14 @@
 server:
   port: 8080
 
+spring:
+  # LLM provider별 디테일은 각 파일로 분리. provider 스위치(llm.provider)는 application.yml에 유지.
+  config:
+    import:
+      - classpath:anthropic.yml
+      - classpath:gemini.yml
+      - classpath:ollama.yml
+
 reaction-bot:
   # 캐릭터 이름 / 스트리머 이름 (환경변수로 덮어쓰기 가능)
   # BOT_NAME, STREAMER_NAME 환경변수 설정 시 그 값을 우선 사용
@@ -8,30 +16,12 @@ reaction-bot:
     name: ${BOT_NAME:리봇}
     streamer-name: ${STREAMER_NAME:로크만}
 
-  # LLM provider 선택
+  # LLM provider 선택 — 각 provider별 디테일은 anthropic.yml / gemini.yml / ollama.yml 참조.
   # "anthropic" = Claude (Haiku triage + Sonnet 생성)
   # "gemini"    = Gemini (Flash-Lite triage + Flash 생성, 더 저렴)
+  # "ollama"    = 로컬 Ollama (1회 호출. triage 생략 → 가장 빠름. vision은 ollama.vision으로 토글)
   llm:
     provider: anthropic
-
-  # Claude API
-  # 2단계 모델로 비용 절감:
-  #  - triage-model: 매 발화마다 "지금 말할 만한가?" 1차 판단 (Haiku, 저렴)
-  #  - model      : SPEAK 판정 났을 때 실제 코멘트 생성 (Sonnet, 고품질)
-  anthropic:
-    api-key: ${ANTHROPIC_API_KEY:}
-    model: claude-haiku-4-5              # 코멘트 생성용
-    triage-model: claude-haiku-4-5        # PASS 판단용 (cheap, 약 1/3 가격)
-    max-tokens: 200
-
-  # Gemini API (Google AI Studio 키)
-  # https://aistudio.google.com/apikey 에서 발급
-  # 같은 2단계 구조. thinking budget은 코드에서 0으로 강제 (단순 분류/리액션이라 추론 토큰 불필요).
-  gemini:
-    api-key: ${GEMINI_API_KEY:}
-    model: gemini-2.5-flash-lite               # 코멘트 생성용
-    triage-model: gemini-2.5-flash-lite   # PASS 판단용 (cheapest)
-    max-tokens: 200
 
   # 대화 히스토리
   history:
@@ -68,7 +58,7 @@ reaction-bot:
     language: "ko"
     compute-type: "int8"            # int8(CPU 빠름), float16(GPU), float32(정확)
     device: "cpu"                   # cpu, cuda, auto. cuda는 NVIDIA cuBLAS 설치 필요
-    vad-aggressiveness: 2           # 0(관대) ~ 3(엄격). BGM 섞이면 3
+    vad-aggressiveness: 3           # 0(관대) ~ 3(엄격). 버튼/딱딱 같은 단발 노이즈 컷 강화 위해 3
     device-index:                   # 빈 값이면 기본 마이크
     server-url: "http://localhost:8080"
     beam-size: 5                    # 빔 서치 크기. 1=속도 우선, 5=권장(정확도↑), 10=느림
@@ -79,8 +69,8 @@ reaction-bot:
     # 컨트롤러 클릭/배경 노이즈처럼 비음성 입력에서 Whisper가 "찹찹찹", "스테이크스테이크" 같은
     # hallucination을 뱉을 때 보통 -1.5 이하 값이 나옴. 이 임계치보다 낮으면 통째로 드롭.
     #  -1.0 : 권장 (보수적)
-    #  -0.8 : 더 공격적 (정상 발화도 일부 컷될 수 있음)
-    min-avg-logprob: -1.0
+    #  -0.8 : 더 공격적 (정상 발화도 일부 컷될 수 있음). 버튼/딱딱 노이즈 컷용
+    min-avg-logprob: -0.8
 
   # 화면 캡처 (발화마다 같이 전송)
   screen:
@@ -99,8 +89,8 @@ reaction-bot:
     ignore-during-speech: true
     # 봇 발화 끝나고 N ms 동안 추가로 무시 (스피커 잔향/피드백 컷)
     grace-period-ms: 800
-    # 너무 짧은 발화는 무시 (헛기침, "어", "음" 등)
-    min-text-length: 2
+    # 너무 짧은 발화는 무시 (헛기침, "어", "음" 등). 3 이상이면 단음절 hallucination 대부분 컷
+    min-text-length: 3
     # 발화 사이 쿨다운 (봇이 한 번 말한 뒤 ms 동안 prefilter가 더 엄격)
     cooldown-ms: 8000
     # 연속 N번 PASS 후 다음 호출에 "이번엔 반드시 응답" 힌트 자동 주입 (적극성 안전망)
@@ -112,6 +102,8 @@ reaction-bot:
       - "^[음어아에오와예네응]+[\\s.?!~ㅋㅎ]*$"          # 단일 추임새
       - "^[ㅋㅎ\\s]{1,10}$"                              # ㅋㅋ, ㅎㅎ 류
       - "^(잠깐만?|어어+|음음+|아아+)[\\s.?!]*$"          # 잠깐만, 어어어 등
+      - "^[ㄱ-ㅎㅏ-ㅣ\\s.?!~]+$"                          # 자음/모음 단독 ("ㅋ", "ㄴ", "ㅇㅇ", "ㅎ ㅎ" 등 STT가 버튼소리에 뱉는 자모)
+      - "^.{1,2}[.?!~…]*$"                                # 1~2글자 단발 (min-text-length로 대부분 컷되지만 안전망)
 
   # 능동 발문 - 정적 시간이 길면 봇이 가끔 먼저 말 걸기
   idle-trigger:
