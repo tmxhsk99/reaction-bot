@@ -59,10 +59,12 @@ public class BotProperties {
         private int maxTokens = 280;                         // num_predict
         private Double temperature;                          // null이면 모델 기본값 사용 (~0.7). 0.9 권장 (다양성↑)
         private Double topP;                                 // null이면 모델 기본값. 0.95 권장
-        private int requestTimeoutSec = 60;                  // 응답 타임아웃
+        private int requestTimeoutSec = 180;                 // 응답 타임아웃. 콜드 로드 포함하면 첫 호출 60s+ 걸릴 수 있어 여유 둠
+        private String keepAlive = "1h";                     // 모델을 메모리에 유지하는 시간 (예: "10m", "1h", "-1"=영구). 방송 중 콜드 로드 방지
         private boolean think = false;                       // qwen3 thinking 모드 (false=꺼서 속도↑)
         private boolean vision = true;                       // true=화면 캡처+이미지 전송 (qwen3-vl/qwen2.5vl 등 VL 모델용)
         private boolean assertive = true;                    // true=로컬 전용 적극성 nudge 자동 주입 (PASS 줄이고 더 말함)
+        private boolean warmupOnStart = true;                // true=앱 기동 시 더미 호출로 모델 미리 로딩 (첫 발화 즉시 응답)
     }
 
     @Getter @Setter
