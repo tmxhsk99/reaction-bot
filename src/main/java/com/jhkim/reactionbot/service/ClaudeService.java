@@ -35,7 +35,8 @@ public class ClaudeService implements LlmProvider {
 
     private static final String TRIAGE_SYSTEM = """
             당신은 스트리밍 코멘터리 봇의 판단기입니다.
-            방금 스트리머가 한 말과 화면을 보고, 봇이 "지금 한 마디 해도 될 상황인가" 판단하세요.
+            방금 스트리머가 한 말(텍스트)만 보고, 봇이 "지금 한 마디 해도 될 상황인가" 판단하세요.
+            (비용 절감을 위해 1차 판단에는 화면 이미지가 제공되지 않습니다. 텍스트만으로 보수적으로 판단.)
             답은 정확히 SPEAK 또는 PASS 둘 중 하나. 다른 글자 절대 금지.
 
             SPEAK 기준:
@@ -77,13 +78,16 @@ public class ClaudeService implements LlmProvider {
     }
 
     @Override
-    public boolean triage(String userText, String base64JpegImage) {
+    public boolean triage(String userText) {
         String input = (userText == null || userText.isBlank())
                 ? "(자동 트리거)"
                 : userText;
 
         List<MessageParam> messages = new ArrayList<>();
-        messages.add(buildLastUserMessage(input, base64JpegImage));
+        messages.add(MessageParam.builder()
+                .role(MessageParam.Role.USER)
+                .content(input)
+                .build());
 
         String systemPrompt = TRIAGE_SYSTEM + passCounter.buildNudge("triage");
 
@@ -94,8 +98,7 @@ public class ClaudeService implements LlmProvider {
                 .messages(messages)
                 .build();
 
-        log.debug("Triage 호출 (Haiku). 이미지: {}, 연속PASS: {}",
-                base64JpegImage != null, passCounter.get());
+        log.debug("Triage 호출 (Haiku, 텍스트 전용). 연속PASS: {}", passCounter.get());
         Message response = client.messages().create(params);
         String raw = extractText(response).toUpperCase().replaceAll("[^A-Z]", "");
 

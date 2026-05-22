@@ -80,16 +80,10 @@ public class ReactionOrchestrator {
             return new ReactionOutcome(Result.BUSY, null);
         }
         try {
-            String base64Image = null;
-            try {
-                base64Image = screenCaptureService.captureBase64Jpeg();
-            } catch (Exception e) {
-                log.warn("화면 캡처 실패. 이미지 없이 진행.", e);
-            }
-
             // 7) Triage — 호명되지 않았으면 저렴한 모델로 PASS/SPEAK 먼저 결정 (토큰 절약)
+            //    상용 API 비용 절감을 위해 1차 판단은 텍스트만으로 수행. 화면 캡처는 통과 후 지연.
             if (!directAddress) {
-                boolean speak = llmProvider.triage(text, base64Image);
+                boolean speak = llmProvider.triage(text);
                 if (!speak) {
                     log.info("PASS by triage (입력: '{}')", text);
                     return new ReactionOutcome(Result.PASS, null);
@@ -98,7 +92,15 @@ public class ReactionOrchestrator {
                 log.info("호명 감지 - triage 건너뛰고 직행 (입력: '{}')", text);
             }
 
-            // 8) 실제 코멘트 생성
+            // 8) 코멘트 생성 직전에 화면 캡처 (triage PASS 시 캡처 비용도 절약)
+            String base64Image = null;
+            try {
+                base64Image = screenCaptureService.captureBase64Jpeg();
+            } catch (Exception e) {
+                log.warn("화면 캡처 실패. 이미지 없이 진행.", e);
+            }
+
+            // 9) 실제 코멘트 생성
             String botText = llmProvider.generateComment(text, base64Image);
             if (LlmProvider.PASS.equals(botText) || botText == null || botText.isBlank()) {
                 return new ReactionOutcome(Result.PASS, null);
