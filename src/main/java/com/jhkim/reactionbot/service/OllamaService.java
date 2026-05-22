@@ -69,8 +69,59 @@ public class OllamaService implements LlmProvider {
         this.http = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
                 .build();
-        log.info("LLM provider=ollama. baseUrl={}, model={}, single-call mode (triage off, vision={})",
-                ollama.getBaseUrl(), ollama.getModel(), ollama.isVision() ? "on" : "off");
+        log.info("LLM provider=ollama. baseUrl={}, model={}, single-call mode (triage off, vision={}, keep_alive={})",
+                ollama.getBaseUrl(), ollama.getModel(),
+                ollama.isVision() ? "on" : "off", ollama.getKeepAlive());
+        if (ollama.isWarmupOnStart()) {
+            warmupAsync();
+        }
+    }
+
+    /**
+     * 백그라운드로 더미 호출 1회 보내서 모델을 메모리에 미리 로드.
+     * 8B 모델 콜드 로드는 30~60초 걸리므로 첫 발화를 기다리게 두지 않기 위함.
+     * 실패해도 무시 (실제 발화 시 다시 시도).
+     */
+    private void warmupAsync() {
+        Thread.startVirtualThread(() -> {
+            BotProperties.Ollama ollama = properties.getOllama();
+            try {
+                long start = System.currentTimeMillis();
+                ObjectNode body = mapper.createObjectNode();
+                body.put("model", ollama.getModel());
+                body.put("stream", false);
+                body.put("keep_alive", ollama.getKeepAlive());
+                // num_predict=1로 최소만 생성. 모델 로딩이 목적.
+                ObjectNode opts = mapper.createObjectNode();
+                opts.put("num_predict", 1);
+                body.set("options", opts);
+                ArrayNode msgs = mapper.createArrayNode();
+                ObjectNode m = mapper.createObjectNode();
+                m.put("role", "user");
+                m.put("content", "hi");
+                msgs.add(m);
+                body.set("messages", msgs);
+
+                String endpoint = stripTrailingSlash(ollama.getBaseUrl()) + "/api/chat";
+                HttpRequest req = HttpRequest.newBuilder()
+                        .uri(URI.create(endpoint))
+                        .header("Content-Type", "application/json")
+                        .timeout(Duration.ofSeconds(ollama.getRequestTimeoutSec()))
+                        .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body)))
+                        .build();
+                log.info("Ollama warm-up 시작 (모델 사전 로드)...");
+                HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+                long elapsed = System.currentTimeMillis() - start;
+                if (resp.statusCode() / 100 == 2) {
+                    log.info("Ollama warm-up 완료 ({}초). 첫 발화 즉시 응답 가능.", elapsed / 1000);
+                } else {
+                    log.warn("Ollama warm-up 응답 비정상 (HTTP {}, {}초): {}",
+                            resp.statusCode(), elapsed / 1000, resp.body());
+                }
+            } catch (Exception e) {
+                log.warn("Ollama warm-up 실패 (실제 발화 때 재시도): {}", e.getMessage());
+            }
+        });
     }
 
     @Override
@@ -140,6 +191,8 @@ public class OllamaService implements LlmProvider {
         body.put("stream", false);
         // qwen3 thinking 모드 토글. Ollama 0.9+는 top-level "think" 지원. 구버전이면 무시됨.
         body.put("think", ollama.isThink());
+        // 모델 메모리 유지 시간 ("10m", "1h", "-1" 등). 매 호출마다 갱신되어 콜드 로드 방지.
+        body.put("keep_alive", ollama.getKeepAlive());
 
         ObjectNode options = mapper.createObjectNode();
         options.put("num_predict", ollama.getMaxTokens());
