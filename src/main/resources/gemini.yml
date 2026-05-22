@@ -1,0 +1,12 @@
+# Gemini (Google AI Studio) 전용 설정.
+# application.yml의 spring.config.import 로 합쳐짐.
+# llm.provider=gemini 일 때만 실제로 사용됨.
+#
+# 키 발급: https://aistudio.google.com/apikey
+# 같은 2단계 구조. thinking budget은 코드에서 0으로 강제 (단순 분류/리액션이라 추론 토큰 불필요).
+reaction-bot:
+  gemini:
+    api-key: ${GEMINI_API_KEY:}
+    model: gemini-2.5-flash-lite          # 코멘트 생성용
+    triage-model: gemini-2.5-flash-lite   # PASS 판단용 (cheapest)
+    max-tokens: 200
