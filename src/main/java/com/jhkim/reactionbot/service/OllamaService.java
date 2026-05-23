@@ -157,6 +157,12 @@ public class OllamaService implements LlmProvider {
         if (properties.getOllama().isAssertive()) {
             systemPrompt = systemPrompt + ASSERTIVE_NUDGE;
         }
+        // ollama 전용 출력 규칙 (한국어 강제·이모지 금지·화면 텍스트 파싱 규칙).
+        // qwen 계열이 중국어/한자/영문으로 빠지는 케이스 차단. 상용 API에는 미적용.
+        String extra = properties.getOllama().getExtraSystemPrompt();
+        if (extra != null && !extra.isBlank()) {
+            systemPrompt = systemPrompt + "\n\n" + extra;
+        }
         systemPrompt = systemPrompt + passCounter.buildNudge("comment");
         // qwen3 계열은 top-level "think: false" 를 무시하고 message.thinking 필드에 응답을 채워 넣는 경우가 있다.
         // 그러면 message.content 가 빈 채로 와서 PASS 로 떨어진다. 시스템 프롬프트 끝에 /no_think 토큰을 박아

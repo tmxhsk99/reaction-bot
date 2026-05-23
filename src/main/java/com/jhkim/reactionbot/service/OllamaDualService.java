@@ -228,10 +228,17 @@ public class OllamaDualService implements LlmProvider {
         if (vm.getTemperature() != null) options.put("temperature", vm.getTemperature());
         body.set("options", options);
 
+        // 비전 단계 시스템 프롬프트 + yml의 추가 룰 (한국어 강제·고유명사 정확 인용 등).
+        String visionSystem = VISION_SYSTEM_PROMPT;
+        String visionExtra = vm.getExtraSystemPrompt();
+        if (visionExtra != null && !visionExtra.isBlank()) {
+            visionSystem = visionSystem + "\n\n" + visionExtra;
+        }
+
         ArrayNode messages = mapper.createArrayNode();
         ObjectNode sys = mapper.createObjectNode();
         sys.put("role", "system");
-        sys.put("content", VISION_SYSTEM_PROMPT);
+        sys.put("content", visionSystem);
         messages.add(sys);
 
         ObjectNode user = mapper.createObjectNode();
@@ -309,6 +316,11 @@ public class OllamaDualService implements LlmProvider {
         }
         if (cfg.isAssertive()) {
             systemPrompt = systemPrompt + ASSERTIVE_NUDGE;
+        }
+        // 텍스트(발화) 단계 전용 출력 규칙 — 한국어 강제·이모지 금지·중복 변주 등.
+        String textExtra = tm.getExtraSystemPrompt();
+        if (textExtra != null && !textExtra.isBlank()) {
+            systemPrompt = systemPrompt + "\n\n" + textExtra;
         }
         systemPrompt = systemPrompt + passCounter.buildNudge("comment");
         if (!tm.isThink()) {
