@@ -22,7 +22,9 @@ import java.util.Base64;
 @RequiredArgsConstructor
 public class ScreenCaptureService {
 
-    private static final int TARGET_WIDTH = 1280;
+    // VL 모델(qwen3-vl 등)은 이미지를 패치로 토큰화 → 가로폭이 곧 토큰 수.
+    // 672로 줄여서 이미지 토큰을 약 1/4로 압축 (OOM 방지).
+    private static final int TARGET_WIDTH = 672;
 
     private final BotProperties properties;
     private final ObsScreenshotClient obsClient;
