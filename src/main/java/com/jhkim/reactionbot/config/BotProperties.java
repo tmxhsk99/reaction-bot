@@ -67,6 +67,9 @@ public class BotProperties {
         private boolean vision = true;                       // true=화면 캡처+이미지 전송 (qwen3-vl/qwen2.5vl 등 VL 모델용)
         private boolean assertive = true;                    // true=로컬 전용 적극성 nudge 자동 주입 (PASS 줄이고 더 말함)
         private boolean warmupOnStart = true;                // true=앱 기동 시 더미 호출로 모델 미리 로딩 (첫 발화 즉시 응답)
+        // ollama 백엔드 전용 추가 시스템 지침. 한국어 강제·이모지 금지·화면 텍스트 파싱 규칙 등.
+        // qwen 계열이 한자/영문으로 빠지는 걸 막기 위해 필요. 빈 값이면 미주입.
+        private String extraSystemPrompt = "";
     }
 
     /**
@@ -93,6 +96,8 @@ public class BotProperties {
         private Double temperature = 0.3;           // 사실 묘사라 낮게 (다양성보다 정확도)
         private Integer numCtx = 4096;
         private String keepAlive = "1h";
+        // 비전 단계용 추가 시스템 지침. 한국어 강제 + 화면 텍스트 정확 인용 룰 등. 빈 값이면 미주입.
+        private String extraSystemPrompt = "";
     }
 
     @Getter @Setter
@@ -104,6 +109,8 @@ public class BotProperties {
         private Integer numCtx = 4096;
         private String keepAlive = "1h";
         private boolean think = false;              // /no_think 토큰 자동 주입할지
+        // 텍스트(발화) 단계용 추가 시스템 지침. 한국어 강제 + 이모지 금지 + 중복 변주 등. 빈 값이면 미주입.
+        private String extraSystemPrompt = "";
     }
 
     @Getter @Setter
