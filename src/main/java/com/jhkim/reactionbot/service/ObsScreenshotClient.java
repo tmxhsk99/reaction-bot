@@ -114,7 +114,7 @@ public class ObsScreenshotClient {
         ObjectNode reqData = objectMapper.createObjectNode()
                 .put("sourceName", sourceName)
                 .put("imageFormat", "jpg")
-                .put("imageWidth", 1280);
+                .put("imageWidth", 672);
         JsonNode resp = request("GetSourceScreenshot", reqData);
 
         String dataUrl = resp.path("responseData").path("imageData").asText();

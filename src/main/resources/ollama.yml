@@ -10,9 +10,10 @@
 reaction-bot:
   ollama:
     base-url: ${OLLAMA_BASE_URL:http://192.168.0.8:11434}    # 내부망 다른 PC에서 Ollama 띄운 주소
-    model: qwen3-vl:8b                    # ollama pull 한 태그 (예: qwen3-vl:8b, qwen2.5vl:7b, qwen3:8b)
+    model: qwen2.5vl:7b                   # ollama pull 한 태그. qwen3-vl은 thinking 강제로 content가 비어 옴 → qwen2.5vl 권장
     vision: true                          # VL 모델이면 true, text-only(qwen3 계열)면 false
     max-tokens: 280                       # num_predict. 로컬은 비용 무관이라 약간 여유 줌
+    num-ctx: 4096                         # 컨텍스트 윈도우. VL 모델은 KV-cache가 VRAM 차지 → 명시해서 OOM 방지. 빈 값이면 모델 디폴트
     temperature: 0.9                      # 0.7=얌전, 0.9=다채로움, 1.0+=튐. 빈 값이면 모델 디폴트(~0.7)
     top_p: 0.95                           # nucleus sampling. 빈 값이면 모델 디폴트
     request-timeout-sec: 180              # 콜드 로드 포함 첫 호출 60s+ 걸리는 케이스 대비. 너무 짧으면 타임아웃

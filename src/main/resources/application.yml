@@ -8,6 +8,7 @@ spring:
       - classpath:anthropic.yml
       - classpath:gemini.yml
       - classpath:ollama.yml
+      - classpath:ollama-dual.yml
 
 reaction-bot:
   # 캐릭터 이름 / 스트리머 이름 (환경변수로 덮어쓰기 가능)
@@ -16,16 +17,17 @@ reaction-bot:
     name: ${BOT_NAME:리봇}
     streamer-name: ${STREAMER_NAME:로크만}
 
-  # LLM provider 선택 — 각 provider별 디테일은 anthropic.yml / gemini.yml / ollama.yml 참조.
-  # "anthropic" = Claude (Haiku triage + Sonnet 생성)
-  # "gemini"    = Gemini (Flash-Lite triage + Flash 생성, 더 저렴)
-  # "ollama"    = 로컬 Ollama (1회 호출. triage 생략 → 가장 빠름. vision은 ollama.vision으로 토글)
+  # LLM provider 선택 — 각 provider별 디테일은 anthropic.yml / gemini.yml / ollama.yml / ollama-dual.yml 참조.
+  # "anthropic"   = Claude (Haiku triage + Sonnet 생성)
+  # "gemini"      = Gemini (Flash-Lite triage + Flash 생성, 더 저렴)
+  # "ollama"      = 로컬 Ollama 단일 모델 (1회 호출. vision은 ollama.vision으로 토글)
+  # "ollama-dual" = 로컬 Ollama 2-스테이지 (vision 모델이 화면 묘사 → text 모델이 반응. VRAM 분산·thinking 강제 회피)
   llm:
-    provider: anthropic
+    provider: ollama-dual
 
   # 대화 히스토리
   history:
-    max-turns: 10                   # 최근 N턴 (user+assistant 각각)
+    max-turns: 4                    # 최근 N턴 (user+assistant 각각). 로컬 Ollama VL은 KV-cache 부담 → 짧게 유지
 
   # TTS
   # provider:

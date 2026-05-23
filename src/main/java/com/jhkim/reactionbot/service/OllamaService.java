@@ -158,6 +158,12 @@ public class OllamaService implements LlmProvider {
             systemPrompt = systemPrompt + ASSERTIVE_NUDGE;
         }
         systemPrompt = systemPrompt + passCounter.buildNudge("comment");
+        // qwen3 계열은 top-level "think: false" 를 무시하고 message.thinking 필드에 응답을 채워 넣는 경우가 있다.
+        // 그러면 message.content 가 빈 채로 와서 PASS 로 떨어진다. 시스템 프롬프트 끝에 /no_think 토큰을 박아
+        // 추론 모드 자체를 끄는 게 가장 확실한 차단.
+        if (!properties.getOllama().isThink()) {
+            systemPrompt = systemPrompt + "\n\n/no_think";
+        }
 
         String raw;
         try {
@@ -196,6 +202,11 @@ public class OllamaService implements LlmProvider {
 
         ObjectNode options = mapper.createObjectNode();
         options.put("num_predict", ollama.getMaxTokens());
+        // 컨텍스트 윈도우 명시. VL 모델은 KV-cache가 VRAM을 크게 잡아먹어 OOM 유발 가능.
+        // 빈 값이면 모델 디폴트(보통 4096) 사용.
+        if (ollama.getNumCtx() != null) {
+            options.put("num_ctx", ollama.getNumCtx());
+        }
         if (ollama.getTemperature() != null) {
             options.put("temperature", ollama.getTemperature());
         }
@@ -248,8 +259,18 @@ public class OllamaService implements LlmProvider {
             throw new RuntimeException("Ollama HTTP " + resp.statusCode() + ": " + resp.body());
         }
         JsonNode root = mapper.readTree(resp.body());
-        JsonNode content = root.path("message").path("content");
-        return content.isMissingNode() ? "" : content.asText("");
+        JsonNode message = root.path("message");
+        String content = message.path("content").asText("");
+        // qwen3 계열이 thinking 모드로 응답하면 content는 빈 채로 오고 thinking 필드에만 내용이 채워진다.
+        // /no_think 토큰으로 막아도 모델이 무시하는 경우가 있어 진단용으로 로깅만 남김.
+        if (content.isBlank()) {
+            String thinking = message.path("thinking").asText("");
+            if (!thinking.isBlank()) {
+                log.warn("Ollama 응답 content는 비어있고 thinking에만 내용이 있음 (thinking 모드 강제됨). " +
+                        "thinking 일부: {}", thinking.length() > 200 ? thinking.substring(0, 200) + "…" : thinking);
+            }
+        }
+        return content;
     }
 
     private static String stripTrailingSlash(String s) {
