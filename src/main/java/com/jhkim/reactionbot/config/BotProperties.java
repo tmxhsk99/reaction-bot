@@ -224,6 +224,9 @@ public class BotProperties {
         private int cooldownMs;
         private java.util.List<String> fillerPatterns = new java.util.ArrayList<>();
         private int nudgeAfterPassCount;    // 연속 N번 PASS 시 다음 호출에 "응답하라" 힌트 주입. 0이면 비활성
+        // true면 봇 이름 호명("리봇아!") 발화에만 응답. 일반 잡담엔 LLM 호출도 안 함 → 완전 수동 모드.
+        // false면 모든 발화를 LLM이 보고 PASS/SPEAK 판단 (기본 동작).
+        private boolean respondOnlyWhenAddressed = false;
     }
 
     @Getter @Setter
