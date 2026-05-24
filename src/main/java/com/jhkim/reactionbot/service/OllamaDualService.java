@@ -46,6 +46,15 @@ public class OllamaDualService implements LlmProvider {
     private static final Pattern THINK_BLOCK =
             Pattern.compile("<think>[\\s\\S]*?</think>", Pattern.MULTILINE);
 
+    /**
+     * 출력 sanitize 패턴들. 로컬 7B 모델이 character.yml의 "한 줄만, 라벨 없이" 룰을
+     * 자주 무시하므로 서버 사이드에서 한 번 더 벗겨낸다.
+     */
+    private static final Pattern LEADING_LABEL =
+            Pattern.compile("^\\s*(?:[\\[\\(]\\s*[^\\]\\)\\r\\n]{1,20}\\s*[\\]\\)]|\\*{1,2}[^*\\r\\n]{1,20}\\*{1,2}|[\\p{L}]{1,10})\\s*[:：]\\s*");
+    private static final Pattern WRAPPING_QUOTES =
+            Pattern.compile("^[\"'“”‘’`]+|[\"'“”‘’`]+$");
+
     /** 텍스트 단계 적극성 부스터. character.yml 룰을 덮어쓰지 않고 보강. */
     private static final String ASSERTIVE_NUDGE = """
 
@@ -191,18 +200,75 @@ public class OllamaDualService implements LlmProvider {
         }
 
         String cleaned = stripThinkBlocks(raw).trim();
-        log.info("봇 raw 응답: {}", cleaned);
+        String sanitized = sanitizeOutput(cleaned);
+        if (!sanitized.equals(cleaned)) {
+            log.info("봇 raw 응답(sanitize 전): {}", cleaned);
+            log.info("봇 응답(sanitize 후): {}", sanitized);
+        } else {
+            log.info("봇 raw 응답: {}", sanitized);
+        }
 
-        String normalized = cleaned.replaceAll("[.\"'\\s]", "").toUpperCase();
+        String normalized = sanitized.replaceAll("[.\"'\\s]", "").toUpperCase();
         if (normalized.equals("PASS") || normalized.isEmpty()) {
             removeLastUserTurn();
             passCounter.increment();
             return PASS;
         }
 
-        history.addAssistant(cleaned);
+        history.addAssistant(sanitized);
         passCounter.reset();
-        return cleaned;
+        return sanitized;
+    }
+
+    /** TTS로 흘러갈 발화 최대 문장 수. 캐릭터 룰("절대 두 문장 넘기지 마")과 일치. */
+    private static final int MAX_SENTENCES = 2;
+
+    /**
+     * 모델이 룰을 어겨도 TTS로 새지 않도록 후처리.
+     *  - "[답변] ...", "(반응) ...", "**답변**: ...", "답변: ..." 류 prefix 제거
+     *  - 양끝 따옴표 제거
+     *  - 두 문장 초과분 제거 (?? / !! 같은 연속 종결자는 한 문장으로 카운트)
+     * LEADING_LABEL을 반복 적용해서 "[답변] **반응**: ..." 같이 중첩된 prefix도 처리.
+     */
+    private String sanitizeOutput(String s) {
+        if (s == null || s.isEmpty()) return s;
+        String out = s;
+        for (int i = 0; i < 3; i++) {
+            String next = LEADING_LABEL.matcher(out).replaceFirst("").trim();
+            if (next.equals(out)) break;
+            out = next;
+        }
+        out = WRAPPING_QUOTES.matcher(out).replaceAll("").trim();
+        out = limitSentences(out, MAX_SENTENCES);
+        return out;
+    }
+
+    /**
+     * 최대 N문장까지만 남기고 그 뒤를 잘라낸다.
+     * "또 죽었어?? 진짜 못한다. 정신 좀 차려." → (N=2) "또 죽었어?? 진짜 못한다."
+     * 연속 종결자(??, !!, ?!, ...)는 한 문장 끝으로 합산.
+     */
+    private static String limitSentences(String s, int maxSentences) {
+        if (s == null || s.isEmpty() || maxSentences <= 0) return s;
+        int len = s.length();
+        int sentences = 0;
+        int i = 0;
+        while (i < len) {
+            if (isSentenceEnd(s.charAt(i))) {
+                while (i + 1 < len && isSentenceEnd(s.charAt(i + 1))) i++;
+                sentences++;
+                if (sentences >= maxSentences) {
+                    return s.substring(0, i + 1).trim();
+                }
+            }
+            i++;
+        }
+        return s;
+    }
+
+    private static boolean isSentenceEnd(char c) {
+        return c == '.' || c == '?' || c == '!' || c == '…'
+                || c == '。' || c == '？' || c == '！';
     }
 
     // ---------- 1단계: Vision (stream + 조기 종료) ----------
@@ -338,6 +404,8 @@ public class OllamaDualService implements LlmProvider {
         if (tm.getNumCtx() != null) options.put("num_ctx", tm.getNumCtx());
         if (tm.getTemperature() != null) options.put("temperature", tm.getTemperature());
         if (tm.getTopP() != null) options.put("top_p", tm.getTopP());
+        if (tm.getRepeatPenalty() != null) options.put("repeat_penalty", tm.getRepeatPenalty());
+        if (tm.getRepeatLastN() != null) options.put("repeat_last_n", tm.getRepeatLastN());
         body.set("options", options);
 
         ArrayNode messages = mapper.createArrayNode();
