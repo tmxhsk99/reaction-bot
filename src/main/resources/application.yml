@@ -9,6 +9,7 @@ spring:
       - classpath:gemini.yml
       - classpath:ollama.yml
       - classpath:ollama-dual.yml
+      - classpath:claude-cli.yml
 
 reaction-bot:
   # 캐릭터 이름 / 스트리머 이름 (환경변수로 덮어쓰기 가능)
@@ -17,13 +18,15 @@ reaction-bot:
     name: ${BOT_NAME:리봇}
     streamer-name: ${STREAMER_NAME:로크만}
 
-  # LLM provider 선택 — 각 provider별 디테일은 anthropic.yml / gemini.yml / ollama.yml / ollama-dual.yml 참조.
-  # "anthropic"   = Claude (Haiku triage + Sonnet 생성)
-  # "gemini"      = Gemini (Flash-Lite triage + Flash 생성, 더 저렴)
-  # "ollama"      = 로컬 Ollama 단일 모델 (1회 호출. vision은 ollama.vision으로 토글)
-  # "ollama-dual" = 로컬 Ollama 2-스테이지 (vision 모델이 화면 묘사 → text 모델이 반응. VRAM 분산·thinking 강제 회피)
+  # LLM provider 선택 — 각 provider별 디테일은 anthropic.yml / gemini.yml / ollama.yml / ollama-dual.yml / claude-cli.yml 참조.
+  # "anthropic"   = Claude API (Haiku triage + Sonnet 생성). 토큰 단가 결제.
+  # "gemini"      = Gemini API (Flash-Lite triage + Flash 생성, 더 저렴).
+  # "ollama"      = 로컬 Ollama 단일 모델 (1회 호출. vision은 ollama.vision으로 토글).
+  # "ollama-dual" = 로컬 Ollama 2-스테이지 (vision 모델이 화면 묘사 → text 모델이 반응. VRAM 분산·thinking 강제 회피).
+  # "claude-cli"  = Claude Code CLI subprocess. Pro/Max 구독 한도 내 호출 → 토큰 비용 0.
+  #                 임시 PNG로 스크린샷 저장 → CLI에 경로 전달 → stdout 응답 캡처. 사전 `claude` 로그인 필요.
   llm:
-    provider: ollama-dual
+    provider: claude-cli
 
   # 대화 히스토리
   history:
