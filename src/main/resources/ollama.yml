@@ -12,10 +12,12 @@ reaction-bot:
     base-url: ${OLLAMA_BASE_URL:http://192.168.0.8:11434}    # 내부망 다른 PC에서 Ollama 띄운 주소
     model: qwen2.5vl:7b                   # ollama pull 한 태그. qwen3-vl은 thinking 강제로 content가 비어 옴 → qwen2.5vl 권장
     vision: true                          # VL 모델이면 true, text-only(qwen3 계열)면 false
-    max-tokens: 280                       # num_predict. 로컬은 비용 무관이라 약간 여유 줌
+    max-tokens: 80                        # num_predict. 한국어 1~2문장(약 30자) 안에서 끝나도록 타이트하게
     num-ctx: 4096                         # 컨텍스트 윈도우. VL 모델은 KV-cache가 VRAM 차지 → 명시해서 OOM 방지. 빈 값이면 모델 디폴트
     temperature: 0.9                      # 0.7=얌전, 0.9=다채로움, 1.0+=튐. 빈 값이면 모델 디폴트(~0.7)
     top_p: 0.95                           # nucleus sampling. 빈 값이면 모델 디폴트
+    repeat-penalty: 1.3                   # "루기아 루기아" 류 토큰 루프 차단. Ollama 기본 1.1은 7B에 약함
+    repeat-last-n: 128                    # 최근 128토큰 안에서 반복 검사 (기본 64는 발화 단위 반복 못 잡음)
     request-timeout-sec: 180              # 콜드 로드 포함 첫 호출 60s+ 걸리는 케이스 대비. 너무 짧으면 타임아웃
     keep-alive: "1h"                      # 모델 메모리 유지 시간. "10m"/"1h"/"-1"(영구). 방송 중 콜드 로드 방지
     think: false                          # qwen3 thinking 모드. false=꺼서 응답 속도↑
@@ -26,6 +28,13 @@ reaction-bot:
     # 상용 API(anthropic/gemini)에는 영향 없음. 빈 문자열이면 미주입.
     extra-system-prompt: |
       [로컬 모델 출력 규칙 - 엄격]
+      - 출력 형식: 발화 본문 한 줄만. 어떤 라벨/태그도 붙이지 마.
+        [답변], [반응], [멘트], [봇], [출력], 답변:, 반응: 같은 prefix 절대 금지.
+        따옴표·괄호·코드블록·markdown(**bold**, _italic_)으로 감싸지도 마.
+        ❌ "[답변] 또 죽었어??"   ❌ "**답변**: 또 죽었어??"   ❌ "\"또 죽었어??\""
+        ✅ 또 죽었어??
+      - 길이: 1~2문장, 최대 30자 내외 권장. "왜냐하면 …", "그래서 …" 류 부연 설명 금지.
+        긴 해설을 만들지 말고 바로 한마디만.
       - 출력 언어는 한국어로만. 한자/병음/중국어/일본어/영문 문장 절대 금지.
         영문은 게임 내 고유명사(스킬·아이템·캐릭터 이름)만 허용.
       - 이모지/이모티콘/특수기호(♥, ★, (>_<) 등) 절대 금지. 음성 합성에 들어가므로 텍스트만.

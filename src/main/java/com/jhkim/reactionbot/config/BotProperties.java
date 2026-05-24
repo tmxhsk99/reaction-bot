@@ -61,6 +61,8 @@ public class BotProperties {
         private Integer numCtx;                              // null이면 모델 기본값(보통 4096). VL 모델 OOM 방지용으로 명시 권장
         private Double temperature;                          // null이면 모델 기본값 사용 (~0.7). 0.9 권장 (다양성↑)
         private Double topP;                                 // null이면 모델 기본값. 0.95 권장
+        private Double repeatPenalty;                        // null이면 Ollama 기본(1.1). 1.3 권장. 단어 토큰 루프(degeneration) 차단
+        private Integer repeatLastN;                         // null이면 Ollama 기본(64). 128 권장. 더 넓은 윈도우에서 반복 검사
         private int requestTimeoutSec = 180;                 // 응답 타임아웃. 콜드 로드 포함하면 첫 호출 60s+ 걸릴 수 있어 여유 둠
         private String keepAlive = "1h";                     // 모델을 메모리에 유지하는 시간 (예: "10m", "1h", "-1"=영구). 방송 중 콜드 로드 방지
         private boolean think = false;                       // qwen3 thinking 모드 (false=꺼서 속도↑)
@@ -106,6 +108,8 @@ public class BotProperties {
         private int maxTokens = 200;
         private Double temperature = 0.9;
         private Double topP = 0.95;
+        private Double repeatPenalty;               // null이면 Ollama 기본(1.1). 1.3 권장. "루기아 루기아" 류 토큰 루프 차단
+        private Integer repeatLastN;                // null이면 Ollama 기본(64). 128 권장. 발화 단위 반복까지 검사
         private Integer numCtx = 4096;
         private String keepAlive = "1h";
         private boolean think = false;              // /no_think 토큰 자동 주입할지
