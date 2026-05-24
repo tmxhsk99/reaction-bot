@@ -74,6 +74,11 @@ public class ReactionOrchestrator {
         }
         boolean directAddress = (decision == SpeechPrefilter.Decision.DIRECT_ADDRESS);
 
+        // 5) "말 걸 때만" 모드 — 호명되지 않은 일반 발화는 LLM 호출 자체 안 함
+        if (properties.getSpeech().isRespondOnlyWhenAddressed() && !directAddress) {
+            log.debug("호명-전용 모드: 일반 발화 PASS ('{}')", text);
+            return new ReactionOutcome(Result.PASS, null);
+        }
 
         // 6) 발화 처리 시작 (lock)
         if (!speaking.compareAndSet(false, true)) {

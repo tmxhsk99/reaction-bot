@@ -33,7 +33,10 @@ import java.util.stream.Stream;
  *
  * 동작:
  *   1) base64 JPEG → 임시 파일에 디코드 저장
- *   2) ProcessBuilder로 `claude --print --append-system-prompt ... [--model ...]` 기동
+ *   2) ProcessBuilder로 `claude --print --system-prompt ... [--model ...]` 기동
+ *      → --append가 아닌 --system-prompt 사용: Claude Code의 기본 "소프트웨어 개발 어시스턴트"
+ *        시스템 프롬프트를 통째로 교체. 안 그러면 캐릭터 지침이 default에 밀려 봇이 자기 정체성
+ *        ("저는 Claude Code입니다...")을 드러내고 RP를 거부함.
  *   3) 프롬프트(히스토리 + 발화 + 이미지 경로 안내)는 stdin으로 전달
  *      → Claude Code가 프롬프트 안의 절대경로를 Read 도구로 자동 로드
  *   4) stdout 캡처 → sanitize → 히스토리 저장 → orchestrator가 TTS
@@ -97,41 +100,71 @@ public class ClaudeCliService implements LlmProvider {
 
     /**
      * 실행파일 결정 우선순위:
-     *  1) executable-search-dir 가 명시되었거나 OS별 기본 후보(Windows: %APPDATA%\Claude\claude-code)가 있으면,
-     *     그 디렉토리 안에서 가장 높은 SemVer 폴더의 claude.exe(또는 claude)를 찾아 사용.
-     *  2) 못 찾으면 cfg.executable 을 그대로 사용 (PATH 또는 사용자가 박아둔 절대경로).
-     * 자동 탐색 덕분에 Claude Code 인스톨러가 새 버전 폴더를 만들어도 봇이 따라감.
+     *  1) executable-search-dir 가 명시되었으면 그 한 곳만 시도.
+     *  2) 아니면 OS별 기본 후보 디렉토리들을 순서대로 시도 — Windows의 경우:
+     *     a) %APPDATA%\Claude\claude-code  (네이티브 인스톨러 위치)
+     *     b) %LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\claude-code  (MSIX 가상화 실 경로)
+     *  3) 어느 후보 디렉토리에서 가장 높은 SemVer 폴더의 claude.exe(또는 claude)를 찾으면 그걸 사용.
+     *  4) 모두 실패하면 cfg.executable 을 그대로 사용 (PATH 또는 사용자가 박아둔 절대경로).
+     * (b)가 필요한 이유: MSIX 패키지로 깔린 Claude Desktop은 %APPDATA% 경로를 AppContainer
+     * redirect로 가상화함. PowerShell/Explorer는 따라가지만 Java NIO Files.isDirectory()는
+     * 가상화 레이어를 우회해 false를 반환 → 실 경로를 직접 시도해야 함.
      */
     private String resolveExecutable(BotProperties.ClaudeCli cfg) {
-        String searchDir = cfg.getExecutableSearchDir();
-        if (isBlank(searchDir)) {
-            searchDir = defaultSearchDir();
+        List<String> searchDirs = new ArrayList<>();
+        String userSearchDir = cfg.getExecutableSearchDir();
+        if (!isBlank(userSearchDir)) {
+            searchDirs.add(userSearchDir);
+        } else {
+            searchDirs.addAll(defaultSearchDirs());
         }
-        if (!isBlank(searchDir)) {
+        for (String searchDir : searchDirs) {
             Path dir = Paths.get(searchDir);
-            if (Files.isDirectory(dir)) {
-                Path latest = findLatestClaude(dir);
-                if (latest != null) {
-                    log.info("Claude CLI 자동 탐색: {} → {}", searchDir, latest);
-                    return latest.toString();
-                }
-                log.warn("Claude CLI 자동 탐색 실패 (search-dir={}). fallback exec='{}'",
-                        searchDir, cfg.getExecutable());
-            } else {
-                log.debug("Claude CLI search-dir 없음: {}. fallback exec='{}'",
-                        searchDir, cfg.getExecutable());
+            if (!Files.isDirectory(dir)) {
+                log.debug("Claude CLI search-dir 없음: {}", searchDir);
+                continue;
             }
+            Path latest = findLatestClaude(dir);
+            if (latest != null) {
+                log.info("Claude CLI 자동 탐색: {} → {}", searchDir, latest);
+                return latest.toString();
+            }
+            log.warn("Claude CLI 자동 탐색 실패 (search-dir={})", searchDir);
         }
+        log.warn("Claude CLI 자동 탐색 실패 — fallback exec='{}'", cfg.getExecutable());
         return cfg.getExecutable();
     }
 
-    /** Windows에서만 자동 추정. 다른 OS는 빈 값(=사용자가 명시해야 자동 탐색 가동). */
-    private static String defaultSearchDir() {
+    /** Windows에서만 자동 추정. 다른 OS는 빈 리스트(=사용자가 명시해야 자동 탐색 가동). */
+    private static List<String> defaultSearchDirs() {
         String os = System.getProperty("os.name", "").toLowerCase();
-        if (!os.contains("win")) return "";
+        if (!os.contains("win")) return List.of();
+        List<String> candidates = new ArrayList<>();
         String appdata = System.getenv("APPDATA");
-        if (appdata == null || appdata.isBlank()) return "";
-        return appdata + File.separator + "Claude" + File.separator + "claude-code";
+        if (appdata != null && !appdata.isBlank()) {
+            candidates.add(appdata + File.separator + "Claude" + File.separator + "claude-code");
+        }
+        // MSIX 패키지 redirect 실 경로. %APPDATA% 경로는 PowerShell엔 보여도 Java NIO에선
+        // 가상화 우회로 false 나오는 경우가 있어 실제 경로도 후보에 추가.
+        String localAppData = System.getenv("LOCALAPPDATA");
+        if (localAppData != null && !localAppData.isBlank()) {
+            Path packagesDir = Paths.get(localAppData, "Packages");
+            if (Files.isDirectory(packagesDir)) {
+                try (Stream<Path> stream = Files.list(packagesDir)) {
+                    stream.filter(Files::isDirectory)
+                            .filter(p -> p.getFileName().toString().startsWith("Claude_"))
+                            .map(p -> p.resolve("LocalCache")
+                                    .resolve("Roaming")
+                                    .resolve("Claude")
+                                    .resolve("claude-code"))
+                            .filter(Files::isDirectory)
+                            .forEach(p -> candidates.add(p.toString()));
+                } catch (IOException e) {
+                    log.debug("MSIX Packages 디렉토리 스캔 실패: {}", e.getMessage());
+                }
+            }
+        }
+        return candidates;
     }
 
     /**
@@ -326,7 +359,10 @@ public class ClaudeCliService implements LlmProvider {
         List<String> cmd = new ArrayList<>();
         cmd.add(resolvedExecutable);
         cmd.add("--print");                                  // non-interactive
-        cmd.add("--append-system-prompt");
+        // --system-prompt: Claude Code 기본 시스템 프롬프트를 통째로 교체.
+        // --append 쓰면 "당신은 Claude Code, 코딩 어시스턴트" 가 default로 박혀있어
+        // 캐릭터 지침을 무시하고 "혼동이 생겼습니다. 저는 Claude Code입니다..." 식으로 RP 거부함.
+        cmd.add("--system-prompt");
         cmd.add(systemPrompt);
         if (!isBlank(cfg.getModel())) {
             cmd.add("--model");

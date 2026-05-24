@@ -22,6 +22,7 @@ import argparse
 import json
 import queue
 import sys
+import threading
 import time
 from collections import deque
 from pathlib import Path
@@ -31,6 +32,38 @@ import requests
 import sounddevice as sd
 import webrtcvad
 from faster_whisper import WhisperModel
+
+
+# 봇 발화 추정 종료 시각 (epoch). 이 시각까지는 audio_queue에 들어오는 PCM을 드롭해
+# 봇 응답 중에 마이크에서 PCM이 쌓이고 봇이 말을 끝낸 뒤 줄줄이 transcribe되는
+# "발화 지연 누적" 현상을 막는다.
+# 정확한 종료 시점은 서버가 알지만(SSE/WebSocket 필요), 일단 글자 수로 추정해서 단순화.
+# - SPOKE 응답 받으면 botText 길이로 추정 TTS 재생 시간 계산 → bot_speaking_until 갱신
+# - 추정값이 짧으면 마이크 빨리 풀려서 다음 발화 받음 (안전)
+# - 추정값이 길면 봇이 이미 끝났는데 마이크가 잠겨있음 (살짝 답답)
+# → 보수적으로 글자당 0.2s + 안전 마진 1s 정도.
+_bot_speaking_until: float = 0.0
+_bot_speaking_lock = threading.Lock()
+
+
+def _bot_is_speaking() -> bool:
+    with _bot_speaking_lock:
+        return time.time() < _bot_speaking_until
+
+
+def _mark_bot_speaking(estimated_sec: float):
+    global _bot_speaking_until
+    with _bot_speaking_lock:
+        _bot_speaking_until = time.time() + estimated_sec
+
+
+def _drain_queue(q: "queue.Queue"):
+    """남은 항목을 전부 버린다. PCM 누적 차단용."""
+    while True:
+        try:
+            q.get_nowait()
+        except queue.Empty:
+            break
 
 
 # 오디오 파라미터 (WebRTC VAD 요구사항: 8/16/32 kHz, 10/20/30 ms 프레임)
@@ -132,7 +165,11 @@ def build_initial_prompt(prompt_file: str, extra_prompt: str) -> str:
     return prompt
 
 
-def post_to_server(server_url: str, text: str):
+def _post_worker(server_url: str, text: str):
+    """
+    별도 스레드에서 서버 호출. 응답 도착 = 봇 LLM+TTS+재생 모두 끝난 시점이라
+    (AudioPlayer.play()가 재생 끝까지 블로킹 후 HTTP 응답이 와서 그렇다) 잠금을 즉시 해제한다.
+    """
     try:
         r = requests.post(
             f"{server_url}/api/react/speech",
@@ -141,11 +178,34 @@ def post_to_server(server_url: str, text: str):
         )
         if r.ok:
             data = r.json()
-            print(f"📡 서버 응답: {data.get('result')} | {data.get('botText') or ''}", flush=True)
+            result = data.get("result")
+            bot_text = data.get("botText") or ""
+            print(f"📡 서버 응답: {result} | {bot_text}", flush=True)
         else:
             print(f"⚠️ 서버 응답 {r.status_code}: {r.text}", flush=True)
     except Exception as e:
         print(f"⚠️ 서버 호출 실패: {e}", flush=True)
+    finally:
+        # 응답 받았으면(혹은 실패했으면) 봇 발화는 끝났거나 안 한 거.
+        # 봇 자기 목소리 마지막 잔향 컷용으로 0.5초만 더 잠그고 풀어준다.
+        _mark_bot_speaking(0.5)
+
+
+def post_to_server(server_url: str, text: str):
+    """
+    fire-and-forget. 메인 루프가 응답 안 기다림 → 다음 발화 즉시 transcribe 가능.
+
+    POST 보낸 직후부터 보수적으로 마이크 잠금 (봇이 LLM+TTS+재생 처리 중 → 그 시간 동안
+    들어오는 사용자/봇 자기 목소리 PCM 드롭). 응답이 오면 _post_worker가 잠금 즉시 해제.
+    """
+    # 봇 응답 latency 보수적 상한. CLI 콜드 스타트 ~10s + TTS 합성/재생 ~3s + 안전 마진 2s.
+    # 응답이 더 빨리 오면 _post_worker가 자동으로 풀어주므로 너무 짧게 잡지 말 것.
+    _mark_bot_speaking(15.0)
+    threading.Thread(
+        target=_post_worker,
+        args=(server_url, text),
+        daemon=True,
+    ).start()
 
 
 def main():
@@ -204,8 +264,31 @@ def main():
 
     try:
         buffer = b""
+        was_bot_speaking = False
         while True:
             chunk = audio_queue.get()
+
+            # 봇 발화 추정 시간 동안엔 마이크 PCM 자체를 버린다.
+            # 이렇게 안 하면 봇이 말하는 5~10초 동안 audio_queue에 PCM이 쌓이고,
+            # 봇 발화 끝난 뒤 줄줄이 VAD/transcribe 돌면서 "한참 전에 한 말"이 늦게 처리됨.
+            # buffer까지 초기화해야 부분 frame이 다음 발화로 잘못 합쳐지지 않음.
+            if _bot_is_speaking():
+                if not was_bot_speaking:
+                    print("🔇 봇 발화 중 — 마이크 입력 드롭 시작", flush=True)
+                    was_bot_speaking = True
+                _drain_queue(audio_queue)
+                buffer = b""
+                # detector 상태도 리셋 (봇 끝난 뒤 첫 발화 깔끔하게 잡기 위해)
+                detector.is_speaking = False
+                detector.voiced_window.clear()
+                detector.silence_window.clear()
+                detector.pre_buffer.clear()
+                detector.current_utterance = []
+                continue
+            if was_bot_speaking:
+                print("🎙️ 봇 발화 종료 — 마이크 입력 재개", flush=True)
+                was_bot_speaking = False
+
             buffer += chunk
             # FRAME_SIZE * BYTES_PER_SAMPLE 만큼씩 끊어서 VAD에 전달
             frame_bytes_size = FRAME_SIZE * BYTES_PER_SAMPLE
