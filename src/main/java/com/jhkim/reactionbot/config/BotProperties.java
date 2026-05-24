@@ -17,6 +17,7 @@ public class BotProperties {
     private Gemini gemini = new Gemini();
     private Ollama ollama = new Ollama();
     private OllamaDual ollamaDual = new OllamaDual();
+    private ClaudeCli claudeCli = new ClaudeCli();
     private History history = new History();
     private Tts tts = new Tts();
     private Stt stt = new Stt();
@@ -114,6 +115,47 @@ public class BotProperties {
         private String keepAlive = "1h";
         private boolean think = false;              // /no_think 토큰 자동 주입할지
         // 텍스트(발화) 단계용 추가 시스템 지침. 한국어 강제 + 이모지 금지 + 중복 변주 등. 빈 값이면 미주입.
+        private String extraSystemPrompt = "";
+    }
+
+    /**
+     * Claude Code CLI 백엔드 (구독 한도 내에서 호출, API 토큰 비용 0).
+     * subprocess 오버헤드가 크므로 1회 호출 모드 + 히스토리는 매번 프롬프트에 합성.
+     */
+    @Getter @Setter
+    public static class ClaudeCli {
+        // CLI 실행파일. executableSearchDir로 자동 탐색이 성공하면 이 값은 무시됨.
+        // 자동 탐색 실패 시 fallback. PATH에 있으면 "claude" / "claude.cmd", 없으면 절대경로.
+        private String executable = "claude";
+        // 버전 폴더 자동 탐색 디렉토리. 빈 값이면 OS별 기본 후보 사용.
+        //  Windows 기본: %APPDATA%\Claude\claude-code  (네이티브 인스톨러 설치 위치)
+        // 이 디렉토리 안의 하위 폴더(예: "2.1.149")들 중 가장 높은 SemVer를 골라
+        // <searchDir>/<버전>/claude.exe 를 실제 executable로 사용. 업데이트 자동 추종.
+        // 자동 탐색이 안 맞는 환경(예: npm 글로벌 설치)에선 이 값을 빈 문자열로 두고
+        // executable 에 직접 경로를 넣을 것.
+        private String executableSearchDir = "";
+        // CLI를 실행할 작업 디렉토리. 빈 값이면 봇 프로세스의 cwd 사용.
+        // Claude Code는 cwd 기준으로 .claude/settings.json·CLAUDE.md를 읽으므로,
+        // 봇 프로젝트 컨텍스트가 섞이는 게 싫으면 빈 디렉토리(예: tts-output 같은)로 지정.
+        private String workingDir = "";
+        // 모델 지정. 빈 값이면 CLI 기본값(보통 Sonnet).
+        // 리액션 봇처럼 가볍게 굴릴 거면 "claude-haiku-4-5-20251001" 권장.
+        private String model = "";
+        // 한 번의 호출 최대 대기 시간. CLI 콜드 스타트 + 추론 포함.
+        private int timeoutSec = 30;
+        // 임시 스크린샷 저장 디렉토리. 빈 값이면 OS 임시 디렉토리(java.io.tmpdir).
+        // 호출 끝나면 항상 삭제.
+        private String tempImageDir = "";
+        // true면 stdin으로 프롬프트 전달, false면 -p 인자로 전달.
+        // 긴 히스토리·이미지 경로 포함 시 stdin 권장(ARG_MAX 회피).
+        private boolean useStdinPrompt = true;
+        // CLI에 허용할 도구. 빈 값이면 미지정(CLI 기본).
+        // 리액션 봇은 도구 거의 안 써도 되니 "Read" 정도면 충분(이미지 읽기용).
+        private String allowedTools = "Read";
+        // false면 캐릭터 프롬프트만으로 단순 호출. true면 ollama처럼 적극성 nudge 추가.
+        private boolean assertive = true;
+        // claude-cli 백엔드 전용 추가 시스템 지침. character.yml 뒤에 append.
+        // 예) 한국어 강제·이모지 금지·줄 수 제한 등. 빈 값이면 미주입.
         private String extraSystemPrompt = "";
     }
 

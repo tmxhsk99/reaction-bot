@@ -1,0 +1,461 @@
+package com.jhkim.reactionbot.service;
+
+import com.jhkim.reactionbot.config.BotProperties;
+import com.jhkim.reactionbot.config.CharacterConfig;
+import jakarta.annotation.PostConstruct;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.stereotype.Service;
+
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Comparator;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
+import java.util.stream.Stream;
+
+/**
+ * Claude Code CLI 백엔드. 봇이 subprocess로 `claude` CLI를 호출해 응답을 받는다.
+ *
+ * 동기:
+ *   API 결제(토큰 단가) 대신 Pro/Max 구독 한도 안에서 처리 → 호출 비용 0.
+ *
+ * 동작:
+ *   1) base64 JPEG → 임시 파일에 디코드 저장
+ *   2) ProcessBuilder로 `claude --print --append-system-prompt ... [--model ...]` 기동
+ *   3) 프롬프트(히스토리 + 발화 + 이미지 경로 안내)는 stdin으로 전달
+ *      → Claude Code가 프롬프트 안의 절대경로를 Read 도구로 자동 로드
+ *   4) stdout 캡처 → sanitize → 히스토리 저장 → orchestrator가 TTS
+ *   5) 임시 이미지는 finally에서 항상 삭제
+ *
+ * 특성:
+ *   - subprocess 오버헤드(콜드 스타트 수 초)가 크므로 hasSeparateTriage=false로 1회 호출
+ *   - acceptsImage=true. 화면 캡처는 orchestrator가 담당
+ *   - 출력 정제는 ollama 서비스와 동일 로직(라벨 prefix·따옴표·문장 수 컷)
+ *
+ * reaction-bot.llm.provider=claude-cli 일 때만 빈 생성.
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+@ConditionalOnProperty(prefix = "reaction-bot.llm", name = "provider", havingValue = "claude-cli")
+public class ClaudeCliService implements LlmProvider {
+
+    private static final Pattern LEADING_LABEL =
+            Pattern.compile("^\\s*(?:[\\[\\(]\\s*[^\\]\\)\\r\\n]{1,20}\\s*[\\]\\)]|\\*{1,2}[^*\\r\\n]{1,20}\\*{1,2}|[\\p{L}]{1,10})\\s*[:：]\\s*");
+    private static final Pattern WRAPPING_QUOTES =
+            Pattern.compile("^[\"'“”‘’`]+|[\"'“”‘’`]+$");
+
+    /** TTS로 흘러갈 최대 문장 수. 캐릭터 룰과 일치. */
+    private static final int MAX_SENTENCES = 2;
+
+    /** ollama 서비스와 동일 컨셉. 구독 한도 안이라 비용 무관 → 적극성 부스트. */
+    private static final String ASSERTIVE_NUDGE = """
+
+
+            [Claude CLI 모드 추가 지침]
+            - 평소보다 한 발 더 적극적으로 끼어들어라.
+            - "PASS 3가지 조건"이 명확히 충족될 때만 PASS. 애매하면 한 마디.
+            - 매번 다른 각도(놀림/응원/예측/딴지/자랑)로 변주.
+            """;
+
+    private final BotProperties properties;
+    private final CharacterConfig character;
+    private final ConversationHistory history;
+    private final PokemonContextService pokemonContext;
+    private final PassCounter passCounter;
+
+    /**
+     * @PostConstruct 에서 한 번 resolve. Claude Code 버전 업데이트는 봇 재시작 시 반영.
+     * (방송 중 자동 업데이트 따라가지 않아도 OK — 콜드 스타트 절약이 더 큼)
+     */
+    private String resolvedExecutable;
+
+    @PostConstruct
+    public void init() {
+        BotProperties.ClaudeCli cfg = properties.getClaudeCli();
+        this.resolvedExecutable = resolveExecutable(cfg);
+        log.info("LLM provider=claude-cli. exec={} (cfg.executable={}, model={}, workingDir={}, stdin={}, timeout={}s)",
+                resolvedExecutable,
+                cfg.getExecutable(),
+                isBlank(cfg.getModel()) ? "(CLI 기본)" : cfg.getModel(),
+                isBlank(cfg.getWorkingDir()) ? "(봇 cwd)" : cfg.getWorkingDir(),
+                cfg.isUseStdinPrompt(),
+                cfg.getTimeoutSec());
+    }
+
+    /**
+     * 실행파일 결정 우선순위:
+     *  1) executable-search-dir 가 명시되었거나 OS별 기본 후보(Windows: %APPDATA%\Claude\claude-code)가 있으면,
+     *     그 디렉토리 안에서 가장 높은 SemVer 폴더의 claude.exe(또는 claude)를 찾아 사용.
+     *  2) 못 찾으면 cfg.executable 을 그대로 사용 (PATH 또는 사용자가 박아둔 절대경로).
+     * 자동 탐색 덕분에 Claude Code 인스톨러가 새 버전 폴더를 만들어도 봇이 따라감.
+     */
+    private String resolveExecutable(BotProperties.ClaudeCli cfg) {
+        String searchDir = cfg.getExecutableSearchDir();
+        if (isBlank(searchDir)) {
+            searchDir = defaultSearchDir();
+        }
+        if (!isBlank(searchDir)) {
+            Path dir = Paths.get(searchDir);
+            if (Files.isDirectory(dir)) {
+                Path latest = findLatestClaude(dir);
+                if (latest != null) {
+                    log.info("Claude CLI 자동 탐색: {} → {}", searchDir, latest);
+                    return latest.toString();
+                }
+                log.warn("Claude CLI 자동 탐색 실패 (search-dir={}). fallback exec='{}'",
+                        searchDir, cfg.getExecutable());
+            } else {
+                log.debug("Claude CLI search-dir 없음: {}. fallback exec='{}'",
+                        searchDir, cfg.getExecutable());
+            }
+        }
+        return cfg.getExecutable();
+    }
+
+    /** Windows에서만 자동 추정. 다른 OS는 빈 값(=사용자가 명시해야 자동 탐색 가동). */
+    private static String defaultSearchDir() {
+        String os = System.getProperty("os.name", "").toLowerCase();
+        if (!os.contains("win")) return "";
+        String appdata = System.getenv("APPDATA");
+        if (appdata == null || appdata.isBlank()) return "";
+        return appdata + File.separator + "Claude" + File.separator + "claude-code";
+    }
+
+    /**
+     * dir 직속 하위 폴더 중 SemVer로 가장 높은 폴더의 실행파일을 찾는다.
+     * 폴더명은 보통 "2.1.149" 형식. 숫자가 아닌 부분은 0으로 처리.
+     */
+    private static Path findLatestClaude(Path dir) {
+        String os = System.getProperty("os.name", "").toLowerCase();
+        String exeName = os.contains("win") ? "claude.exe" : "claude";
+        try (Stream<Path> stream = Files.list(dir)) {
+            return stream
+                    .filter(Files::isDirectory)
+                    .map(p -> p.resolve(exeName))
+                    .filter(Files::isRegularFile)
+                    .max(Comparator.comparing(
+                            p -> parseVersion(p.getParent().getFileName().toString()),
+                            VERSION_COMPARATOR))
+                    .orElse(null);
+        } catch (IOException e) {
+            log.warn("Claude CLI search-dir 읽기 실패 ({}): {}", dir, e.getMessage());
+            return null;
+        }
+    }
+
+    /** "2.1.149" → [2,1,149]. 비숫자는 0으로. 짧으면 뒤를 0으로 패딩. */
+    private static int[] parseVersion(String s) {
+        String[] parts = s.split("\\.");
+        int[] result = new int[Math.max(parts.length, 3)];
+        for (int i = 0; i < parts.length; i++) {
+            String digits = parts[i].replaceAll("[^0-9]", "");
+            try {
+                result[i] = digits.isEmpty() ? 0 : Integer.parseInt(digits);
+            } catch (NumberFormatException e) {
+                result[i] = 0;
+            }
+        }
+        return result;
+    }
+
+    private static final Comparator<int[]> VERSION_COMPARATOR = (a, b) -> {
+        int len = Math.max(a.length, b.length);
+        for (int i = 0; i < len; i++) {
+            int av = i < a.length ? a[i] : 0;
+            int bv = i < b.length ? b[i] : 0;
+            if (av != bv) return Integer.compare(av, bv);
+        }
+        return 0;
+    };
+
+    @Override
+    public boolean hasSeparateTriage() {
+        return false;
+    }
+
+    @Override
+    public boolean acceptsImage() {
+        return true;
+    }
+
+    /** 단일 호출 모드라 호출되지 않지만 인터페이스 계약상 항상 SPEAK. */
+    @Override
+    public boolean triage(String userText) {
+        return true;
+    }
+
+    @Override
+    public String generateComment(String userText, String base64JpegImage) {
+        String input = (userText == null || userText.isBlank())
+                ? "(자동 트리거. 한 마디 해 봐)"
+                : userText;
+
+        history.addUser(input);
+
+        BotProperties.ClaudeCli cfg = properties.getClaudeCli();
+        String systemPrompt = buildSystemPrompt(cfg, input);
+
+        // base64 JPEG → 임시 파일
+        Path imagePath = null;
+        if (base64JpegImage != null && !base64JpegImage.isBlank()) {
+            try {
+                imagePath = writeTempImage(base64JpegImage, cfg.getTempImageDir());
+                log.debug("임시 스크린샷 저장: {}", imagePath);
+            } catch (Exception e) {
+                log.warn("임시 스크린샷 저장 실패. 이미지 없이 진행: {}", e.getMessage());
+            }
+        }
+
+        String userPrompt = buildUserPrompt(imagePath);
+
+        String raw;
+        try {
+            raw = callCli(cfg, systemPrompt, userPrompt);
+        } catch (Exception e) {
+            log.error("Claude CLI 호출 실패", e);
+            removeLastUserTurn();
+            return PASS;
+        } finally {
+            if (imagePath != null) {
+                try {
+                    Files.deleteIfExists(imagePath);
+                } catch (IOException io) {
+                    log.warn("임시 스크린샷 삭제 실패 ({}): {}", imagePath, io.getMessage());
+                }
+            }
+        }
+
+        String cleaned = raw == null ? "" : raw.trim();
+        String sanitized = sanitizeOutput(cleaned);
+        if (!sanitized.equals(cleaned)) {
+            log.info("봇 raw 응답(sanitize 전): {}", cleaned);
+            log.info("봇 응답(sanitize 후): {}", sanitized);
+        } else {
+            log.info("봇 raw 응답: {}", sanitized);
+        }
+
+        String normalized = sanitized.replaceAll("[.\"'\\s]", "").toUpperCase();
+        if (normalized.equals("PASS") || normalized.isEmpty()) {
+            removeLastUserTurn();
+            passCounter.increment();
+            return PASS;
+        }
+
+        history.addAssistant(sanitized);
+        passCounter.reset();
+        return sanitized;
+    }
+
+    // ---------- 프롬프트 합성 ----------
+
+    private String buildSystemPrompt(BotProperties.ClaudeCli cfg, String input) {
+        String sys = character.getSystemPrompt();
+        String pokemonCtx = pokemonContext.buildContext(input);
+        if (pokemonCtx != null) {
+            sys = sys + "\n\n" + pokemonCtx;
+            log.debug("Pokemon 컨텍스트 주입됨");
+        }
+        if (cfg.isAssertive()) {
+            sys = sys + ASSERTIVE_NUDGE;
+        }
+        String extra = cfg.getExtraSystemPrompt();
+        if (!isBlank(extra)) {
+            sys = sys + "\n\n" + extra;
+        }
+        sys = sys + passCounter.buildNudge("comment");
+        return sys;
+    }
+
+    /**
+     * 히스토리(현재 입력 포함)와 이미지 경로 안내를 한 프롬프트로 합성.
+     * Claude Code CLI는 stateless 호출이라 매번 전체 컨텍스트를 새로 넘긴다.
+     */
+    private String buildUserPrompt(Path imagePath) {
+        StringBuilder sb = new StringBuilder();
+        List<ConversationHistory.Turn> turns = history.snapshot();
+
+        // 마지막 turn은 방금 add한 현재 입력. 그 이전이 과거 대화.
+        if (turns.size() > 1) {
+            sb.append("[지금까지 대화]\n");
+            for (int i = 0; i < turns.size() - 1; i++) {
+                ConversationHistory.Turn turn = turns.get(i);
+                String label = "user".equals(turn.role()) ? "스트리머" : "리봇";
+                sb.append(label).append(": ").append(turn.content()).append('\n');
+            }
+            sb.append('\n');
+        }
+
+        if (imagePath != null) {
+            sb.append("[현재 화면 스크린샷]\n")
+              .append(imagePath.toAbsolutePath())
+              .append("\n위 경로의 이미지를 Read로 한 번만 확인하고, 화면 + 아래 발화에 한 줄로 반응하라.\n\n");
+        }
+
+        ConversationHistory.Turn last = turns.get(turns.size() - 1);
+        sb.append("[방금 들은 말]\n").append(last.content());
+        return sb.toString();
+    }
+
+    private Path writeTempImage(String base64Jpeg, String dir) throws IOException {
+        byte[] bytes = Base64.getDecoder().decode(base64Jpeg);
+        Path baseDir = isBlank(dir)
+                ? Paths.get(System.getProperty("java.io.tmpdir"))
+                : Paths.get(dir);
+        Files.createDirectories(baseDir);
+        Path target = baseDir.resolve("reaction-bot-" + UUID.randomUUID() + ".jpg");
+        Files.write(target, bytes);
+        return target;
+    }
+
+    // ---------- CLI 호출 ----------
+
+    private String callCli(BotProperties.ClaudeCli cfg, String systemPrompt, String userPrompt) throws Exception {
+        List<String> cmd = new ArrayList<>();
+        cmd.add(resolvedExecutable);
+        cmd.add("--print");                                  // non-interactive
+        cmd.add("--append-system-prompt");
+        cmd.add(systemPrompt);
+        if (!isBlank(cfg.getModel())) {
+            cmd.add("--model");
+            cmd.add(cfg.getModel());
+        }
+        if (!isBlank(cfg.getAllowedTools())) {
+            cmd.add("--allowedTools");
+            cmd.add(cfg.getAllowedTools());
+        }
+        if (!cfg.isUseStdinPrompt()) {
+            cmd.add(userPrompt);
+        }
+
+        ProcessBuilder pb = new ProcessBuilder(cmd);
+        if (!isBlank(cfg.getWorkingDir())) {
+            pb.directory(new File(cfg.getWorkingDir()));
+        }
+        // Node 계열 도구가 UTF-8 콘솔 출력을 안정적으로 내도록 강제.
+        pb.environment().put("PYTHONIOENCODING", "utf-8");
+        pb.environment().put("LANG", "en_US.UTF-8");
+        pb.redirectErrorStream(false);
+
+        log.debug("Claude CLI 호출. argc={}, stdin={}, model={}, allowedTools={}",
+                cmd.size(), cfg.isUseStdinPrompt(), cfg.getModel(), cfg.getAllowedTools());
+
+        long start = System.currentTimeMillis();
+        Process proc = pb.start();
+
+        // stdin 으로 프롬프트 전달 (길이 안전)
+        if (cfg.isUseStdinPrompt()) {
+            try (OutputStream stdin = proc.getOutputStream()) {
+                stdin.write(userPrompt.getBytes(StandardCharsets.UTF_8));
+                stdin.flush();
+            }
+        }
+
+        // 큰 출력 buffer 막힘 방지 — 별도 가상스레드로 stdout/stderr 동시 드레인.
+        StringBuilder out = new StringBuilder();
+        StringBuilder err = new StringBuilder();
+        Thread tOut = drainAsync(proc.getInputStream(), out);
+        Thread tErr = drainAsync(proc.getErrorStream(), err);
+
+        boolean finished = proc.waitFor(cfg.getTimeoutSec(), TimeUnit.SECONDS);
+        if (!finished) {
+            proc.destroyForcibly();
+            // 드레이너 잠깐 기다렸다가 부분 출력이라도 로깅
+            tOut.join(500);
+            tErr.join(500);
+            throw new RuntimeException("Claude CLI timeout (" + cfg.getTimeoutSec() + "s). stderr=" + err);
+        }
+        tOut.join(2000);
+        tErr.join(500);
+
+        long elapsed = System.currentTimeMillis() - start;
+        int exit = proc.exitValue();
+        log.debug("Claude CLI 종료. exit={}, {}ms, stdout {}자, stderr {}자",
+                exit, elapsed, out.length(), err.length());
+
+        if (exit != 0) {
+            throw new RuntimeException("Claude CLI exit=" + exit + " stderr=" + err);
+        }
+        if (err.length() > 0) {
+            log.debug("Claude CLI stderr: {}", err);
+        }
+        return out.toString();
+    }
+
+    private Thread drainAsync(InputStream is, StringBuilder sink) {
+        return Thread.startVirtualThread(() -> {
+            byte[] buf = new byte[4096];
+            try (is) {
+                int n;
+                while ((n = is.read(buf)) != -1) {
+                    sink.append(new String(buf, 0, n, StandardCharsets.UTF_8));
+                }
+            } catch (IOException ignored) {
+                // 프로세스가 죽으면 read가 끊김. 정상.
+            }
+        });
+    }
+
+    // ---------- 출력 정제 (ollama 서비스와 동일 컨셉) ----------
+
+    private String sanitizeOutput(String s) {
+        if (s == null || s.isEmpty()) return s;
+        String out = s;
+        for (int i = 0; i < 3; i++) {
+            String next = LEADING_LABEL.matcher(out).replaceFirst("").trim();
+            if (next.equals(out)) break;
+            out = next;
+        }
+        out = WRAPPING_QUOTES.matcher(out).replaceAll("").trim();
+        out = limitSentences(out, MAX_SENTENCES);
+        return out;
+    }
+
+    private static String limitSentences(String s, int maxSentences) {
+        if (s == null || s.isEmpty() || maxSentences <= 0) return s;
+        int len = s.length();
+        int sentences = 0;
+        int i = 0;
+        while (i < len) {
+            if (isSentenceEnd(s.charAt(i))) {
+                while (i + 1 < len && isSentenceEnd(s.charAt(i + 1))) i++;
+                sentences++;
+                if (sentences >= maxSentences) {
+                    return s.substring(0, i + 1).trim();
+                }
+            }
+            i++;
+        }
+        return s;
+    }
+
+    private static boolean isSentenceEnd(char c) {
+        return c == '.' || c == '?' || c == '!' || c == '…'
+                || c == '。' || c == '？' || c == '！';
+    }
+
+    private void removeLastUserTurn() {
+        List<ConversationHistory.Turn> snapshot = history.snapshot();
+        if (snapshot.isEmpty()) return;
+        ConversationHistory.Turn last = snapshot.get(snapshot.size() - 1);
+        if ("user".equals(last.role())) {
+            history.popLast();
+        }
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.isBlank();
+    }
+}
