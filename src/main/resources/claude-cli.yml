@@ -52,7 +52,7 @@ reaction-bot:
     allowed-tools: "Read"
 
     # 적극성 nudge 자동 주입 여부. ollama와 동일 컨셉.
-    assertive: true
+    assertive: false
 
     # PASS/SPEAK 1차 판단을 별도 CLI 호출로 수행할지.
     # true 시 매 발화에 triage CLI 호출 추가 → subprocess 콜드스타트 2번 (~+2-4초).
@@ -76,7 +76,7 @@ reaction-bot:
       [Claude Code CLI 출력 규칙 - 엄격]
       - 출력은 발화 본문 한 줄만. 도구 호출/설명/마크다운 없이 순수 텍스트로.
         라벨([답변], [반응], "답변:", "Bot:" 등)·따옴표·코드블록 절대 금지.
-      - 길이: 1~2문장, 최대 40자 내외. 부연 설명 금지.
+      - 길이: 1~2문장. 부연 설명 금지.
       - 한국어로만. 영문은 게임 내 고유명사만 허용.
       - 이모지/이모티콘/특수기호 금지(음성 합성 대상).
       - 첨부된 이미지 경로가 프롬프트에 있으면 Read 도구로 한 번만 확인 후 바로 응답.
