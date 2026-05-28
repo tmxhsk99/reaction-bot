@@ -64,7 +64,7 @@ public class OpenAiService implements LlmProvider {
               - 스트리머가 "야 봐", "이거 봐바" 류로 화면을 가리킴
 
             SPEAK_TEXT (화면 없이도 답할 수 있는 경우):
-              - 봇 이름 호명 + 텍스트 질문 ("리봇아 너는 뭐 좋아해?", "리봇 잘 지냈어?")
+              - 봇 이름 호명 + 텍스트 질문 ("{name}아 너는 뭐 좋아해?", "{name} 잘 지냈어?")
               - 봇 의견·생각을 묻는 일반 잡담 ("너는 어떻게 생각해?")
               - 화면 맥락 없는 자기 얘기·회상
             """;
@@ -98,7 +98,7 @@ public class OpenAiService implements LlmProvider {
     public TriageResult triage(String userText, boolean needsVisionDecision) {
         String input = (userText == null || userText.isBlank()) ? "(자동 트리거)" : userText;
 
-        String basePrompt = needsVisionDecision ? TRIAGE_SYSTEM_WITH_VISION : TRIAGE_SYSTEM;
+        String basePrompt = character.substitute(needsVisionDecision ? TRIAGE_SYSTEM_WITH_VISION : TRIAGE_SYSTEM);
         String systemPrompt = basePrompt + passCounter.buildNudge("triage");
 
         long maxTokens = needsVisionDecision ? 16L : 10L;
