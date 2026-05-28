@@ -66,13 +66,15 @@ public class IdleTriggerScheduler {
 
     /**
      * 큰 임계값부터 검사해서 가장 격상된 단계 반환. null이면 미발동.
-     * topic 임계값이 0 이하면 topic 단계 비활성 (light만).
+     * 임계값이 0 이하면 해당 단계 비활성:
+     *  - topic <= 0 : topic 비활성 (light만)
+     *  - light <= 0 : light 비활성 (오설정 시 매 체크마다 스팸 트리거 방지). topic만 살아있으면 topic은 동작.
      */
     private BotProperties.IdleTrigger.Stage decideStage(BotProperties.IdleTrigger cfg, long sinceUserMs) {
         if (cfg.getTopicThresholdMs() > 0 && sinceUserMs >= cfg.getTopicThresholdMs()) {
             return BotProperties.IdleTrigger.Stage.TOPIC;
         }
-        if (sinceUserMs >= cfg.getLightThresholdMs()) {
+        if (cfg.getLightThresholdMs() > 0 && sinceUserMs >= cfg.getLightThresholdMs()) {
             return BotProperties.IdleTrigger.Stage.LIGHT;
         }
         return null;

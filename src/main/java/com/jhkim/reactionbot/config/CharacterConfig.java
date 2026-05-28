@@ -81,7 +81,15 @@ public class CharacterConfig {
         return substitute((tpl == null || tpl.isBlank()) ? DEFAULT_TOPIC_PROMPT : tpl);
     }
 
+    /**
+     * {name}/{streamer} placeholder 치환. name/streamerName이 null이어도 NPE 안 나게 방어.
+     * application.yml에 ${BOT_NAME:리봇}/${STREAMER_NAME:로크만} 기본값이 있어 보통은 non-null이지만,
+     * 환경변수로 빈 값/누락 주입 같은 엣지케이스 대비.
+     */
     private String substitute(String s) {
-        return s.replace("{name}", this.name).replace("{streamer}", this.streamerName);
+        if (s == null) return "";
+        String n = (this.name == null) ? "" : this.name;
+        String st = (this.streamerName == null) ? "" : this.streamerName;
+        return s.replace("{name}", n).replace("{streamer}", st);
     }
 }

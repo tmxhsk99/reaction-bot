@@ -783,15 +783,15 @@ reaction-bot:
 **중요 — idle은 캐릭터 프롬프트(character.yml)를 사용하지 않습니다.** 평소 페르소나는 "반응"에 최적화되어 idle에 그대로 쓰면 너무 무겁고 진지해지는 걸 막기 위해 분리. 톤이 마음에 안 들면 `light-prompt-template` / `topic-prompt-template`에 짧은 캐릭터 묘사 + 상황 지시를 직접 적으면 됩니다. 끄려면 `enabled: false`.
 
 ### Multimodal 모드 (vision 자동 판단)
-[application.yml](src/main/resources/application.yml)의 `llm.multimodal-mode`로 화면 캡처 정책 제어. **anthropic/gemini provider에서만 동작** (single-call provider는 자기 설정 따름):
+[application.yml](src/main/resources/application.yml)의 `llm.multimodal-mode`로 화면 캡처 정책 제어. **triage 단계가 있는 provider에서만 동작** — `anthropic`, `gemini`, 그리고 `claude-cli`(단 `claude-cli.triage-enabled: true`일 때만). triage가 없는 provider(`ollama`, 또는 `claude-cli`의 triage-enabled=false)는 이 설정을 무시하고 자기 vision 설정을 따름:
 
 | 값 | 동작 |
 |---|---|
-| `always` (기본) | 매 발화마다 캡처. 안전하고 단순 |
+| `always` | 매 발화마다 캡처. 안전하고 단순 |
 | `never` | 캡처 안 함. 텍스트 잡담 봇으로 운용할 때 |
-| `ai-decide` | triage 단계에서 LLM이 vision 필요 여부 판단. 화면 의존 발화만 캡처 → 텍스트 잡담·호명 응답에선 캡처 비용/지연 절감 |
+| `ai-decide` (기본) | triage 단계에서 LLM이 vision 필요 여부 판단. 화면 의존 발화만 캡처 → 텍스트 잡담·호명 응답에선 캡처 비용/지연 절감 |
 
-`ai-decide`는 triage 토큰을 약간 더 쓰는 대신(SPEAK → SPEAK_VISION/SPEAK_TEXT 둘 중 하나) 본 호출의 이미지 토큰을 절약. 자주 호명되는 잡담형 사용 패턴에서 효과 큼.
+`ai-decide`는 triage 토큰을 약간 더 쓰는 대신(SPEAK → SPEAK_VISION/SPEAK_TEXT 둘 중 하나) 본 호출의 이미지 토큰을 절약. 자주 호명되는 잡담형 사용 패턴에서 효과 큼. `claude-cli`의 경우 SPEAK_TEXT면 임시 PNG 저장 + Read tool 호출 자체를 건너뛰어 지연도 줄어듦.
 
 ### Pokemon 지식 보강 (PokeAPI 컨텍스트)
 스트리머 발화에 한국어 포켓몬 이름(예: "피카츄", "메타몽")이 감지되면 자동으로 [PokeAPI](https://pokeapi.co)에서 타입/특성/종족값을 받아와 LLM 호출에 컨텍스트로 주입합니다. 봇이 더 정확한 멘트를 할 수 있게 됨.
