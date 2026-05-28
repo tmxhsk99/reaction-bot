@@ -15,8 +15,10 @@ public class BotProperties {
     private Llm llm = new Llm();
     private Anthropic anthropic = new Anthropic();
     private Gemini gemini = new Gemini();
+    private OpenAi openai = new OpenAi();
     private Ollama ollama = new Ollama();
     private ClaudeCli claudeCli = new ClaudeCli();
+    private CodexCli codexCli = new CodexCli();
     private History history = new History();
     private Tts tts = new Tts();
     private Stt stt = new Stt();
@@ -33,7 +35,7 @@ public class BotProperties {
 
     @Getter @Setter
     public static class Llm {
-        // "anthropic" | "gemini" | "ollama" — 어느 provider를 활성화할지
+        // "anthropic" | "gemini" | "openai" | "ollama" | "claude-cli" | "codex-cli" — 어느 provider를 활성화할지
         private String provider = "anthropic";
         // 비전(화면 캡처) 사용 정책. triage를 지원하는 provider(anthropic/gemini)에서만 의미 있음.
         // single-call provider(ollama/claude-cli)는 각 provider 설정(ollama.vision 등)을 따름.
@@ -56,6 +58,18 @@ public class BotProperties {
         private String apiKey;
         private String model;            // 코멘트 생성용 (Flash)
         private String triageModel;      // PASS/SPEAK 1차 판단용 (Flash-Lite)
+        private int maxTokens;
+    }
+
+    /**
+     * OpenAI API 백엔드 (토큰 종량 과금). ClaudeService/GeminiService와 동일한 2단계 구조.
+     * 인증: apiKey 비어있으면 OPENAI_API_KEY 환경변수 사용.
+     */
+    @Getter @Setter
+    public static class OpenAi {
+        private String apiKey;           // 빈 값이면 OPENAI_API_KEY 환경변수
+        private String model;            // 코멘트 생성용 (vision 가능 모델. 예: gpt-4o-mini)
+        private String triageModel;      // PASS/SPEAK 1차 판단용 (저렴한 모델)
         private int maxTokens;
     }
 
@@ -132,6 +146,50 @@ public class BotProperties {
         private String triageModel = "claude-haiku-4-5";
         // triage CLI 호출 타임아웃 (s). 본 호출보다 짧게.
         private int triageTimeoutSec = 15;
+    }
+
+    /**
+     * Codex CLI 백엔드 (OpenAI). subprocess로 `codex exec` 호출.
+     * 인증: apiKey 설정 시 CODEX_API_KEY 환경변수로 종량 과금. 비어있으면 `codex login`으로
+     *       저장된 ChatGPT 구독 인증 재사용(토큰 비용 0).
+     *
+     * Claude Code와 다른 점:
+     *  - --system-prompt(기본 프롬프트 통째 교체) 플래그가 없음 → 캐릭터 페르소나를 프롬프트 본문 앞에 주입.
+     *  - 이미지는 -i 플래그로 직접 첨부(Read 도구 불필요).
+     *  - 최종 메시지는 -o <파일>로 캡처.
+     */
+    @Getter @Setter
+    public static class CodexCli {
+        // CLI 실행파일. PATH에 있으면 "codex", 없으면 절대경로. 환경변수 CODEX_CLI_EXEC로 덮어쓰기 가능.
+        private String executable = "codex";
+        // API 키. 설정 시 CODEX_API_KEY 환경변수로 전달(종량 과금). 빈 값이면 저장된 codex login(구독) 사용.
+        private String apiKey = "";
+        // 생성 모델. 빈 값이면 codex 설정 기본값. 예: "gpt-5-codex", "o4-mini"
+        private String model = "";
+        // triage용 모델. 빈 값이면 main model과 동일.
+        private String triageModel = "";
+        // codex 추론 강도. "minimal" | "low" | "medium" | "high". 빈 값이면 미지정(codex 기본).
+        // 실시간 봇은 응답 속도가 중요 → "low" 권장. -c model_reasoning_effort=<값> 로 전달.
+        private String reasoningEffort = "low";
+        // codex exec를 실행할 작업 디렉토리(--cd). 빈 값이면 봇 cwd.
+        // codex가 AGENTS.md를 읽으므로 봇 프로젝트 컨텍스트 섞임이 싫으면 빈 디렉토리 지정 권장.
+        private String workingDir = "";
+        // git 저장소 밖에서도 실행 허용(--skip-git-repo-check). 빈 작업 디렉토리 쓸 때 필요.
+        private boolean skipGitRepoCheck = true;
+        // ~/.codex/config.toml 로드 건너뛰기(--ignore-user-config). 인증은 그대로 사용.
+        private boolean ignoreUserConfig = false;
+        // 한 번 호출 최대 대기(초). 콜드 스타트 + 추론 포함.
+        private int timeoutSec = 40;
+        // 임시 스크린샷 저장 디렉토리. 빈 값이면 OS 임시 디렉토리. 호출 끝나면 항상 삭제.
+        private String tempImageDir = "";
+        // true면 ollama처럼 적극성 nudge 추가.
+        private boolean assertive = true;
+        // codex 백엔드 전용 추가 시스템 지침(페르소나 블록 뒤 append). 한국어 강제·이모지 금지·줄 수 제한 등.
+        private String extraSystemPrompt = "";
+        // true면 매 발화에 triage CLI 호출 추가(PASS/SPEAK 1차 판단). PASS 빈도 높은 패턴에서만 권장.
+        private boolean triageEnabled = false;
+        // triage CLI 호출 타임아웃(초). 본 호출보다 짧게.
+        private int triageTimeoutSec = 20;
     }
 
     @Getter @Setter

@@ -1,0 +1,19 @@
+# OpenAI (Claude API에 대응하는 OpenAI API) 전용 설정.
+# application.yml의 spring.config.import 로 합쳐짐.
+# llm.provider=openai 일 때만 실제로 사용됨.
+#
+# 2단계 모델로 비용 절감:
+#  - triage-model: 매 발화마다 "지금 말할 만한가?" 1차 판단 (저렴한 모델, 텍스트만)
+#  - model      : SPEAK 판정 났을 때 실제 코멘트 생성 (vision 가능 모델)
+#
+# 인증: api-key 비어있으면 OPENAI_API_KEY 환경변수 사용.
+reaction-bot:
+  openai:
+    api-key: ${OPENAI_API_KEY:}
+    # 코멘트 생성용. vision(화면 캡처)을 쓰므로 이미지 입력 가능한 모델이어야 함.
+    #   gpt-4o-mini   ← 저렴 + vision. 짧은 리액션엔 충분 (권장)
+    #   gpt-4o        ← 더 풍부한 반응, 비쌈
+    model: gpt-4o-mini
+    # PASS/SPEAK 1차 판단용 (텍스트만, 라벨 단답). 가장 싼 모델로.
+    triage-model: gpt-4o-mini
+    max-tokens: 200
