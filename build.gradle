@@ -27,6 +27,9 @@ dependencies {
     // Google Gemini 공식 Java SDK
     implementation 'com.google.genai:google-genai:1.53.0'
 
+    // OpenAI 공식 Java SDK (provider=openai 일 때 사용)
+    implementation 'com.openai:openai-java:4.37.0'
+
     // mp3 재생용
     implementation 'javazoom:jlayer:1.0.1'
 

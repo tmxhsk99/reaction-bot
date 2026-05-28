@@ -7,8 +7,10 @@ spring:
     import:
       - classpath:anthropic.yml
       - classpath:gemini.yml
+      - classpath:openai.yml
       - classpath:ollama.yml
       - classpath:claude-cli.yml
+      - classpath:codex-cli.yml
 
 reaction-bot:
   # 캐릭터 이름 / 스트리머 이름 (환경변수로 덮어쓰기 가능)
@@ -17,12 +19,15 @@ reaction-bot:
     name: ${BOT_NAME:리봇}
     streamer-name: ${STREAMER_NAME:로크만}
 
-  # LLM provider 선택 — 각 provider별 디테일은 anthropic.yml / gemini.yml / ollama.yml / claude-cli.yml 참조.
+  # LLM provider 선택 — 각 provider별 디테일은 anthropic.yml / gemini.yml / openai.yml / ollama.yml / claude-cli.yml / codex-cli.yml 참조.
   # "anthropic"  = Claude API (Haiku triage + Sonnet 생성). 토큰 단가 결제.
   # "gemini"     = Gemini API (Flash-Lite triage + Flash 생성, 더 저렴).
+  # "openai"     = OpenAI API (mini triage + 생성). 토큰 단가 결제. OPENAI_API_KEY 필요.
   # "ollama"     = 로컬 Ollama 단일 모델 (1회 호출. vision은 ollama.vision으로 토글).
   # "claude-cli" = Claude Code CLI subprocess. Pro/Max 구독 한도 내 호출 → 토큰 비용 0.
   #                임시 PNG로 스크린샷 저장 → CLI에 경로 전달 → stdout 응답 캡처. 사전 `claude` 로그인 필요.
+  # "codex-cli"  = Codex CLI(OpenAI) subprocess. `codex login`(구독, 토큰 0) 또는 CODEX_API_KEY(종량).
+  #                임시 PNG를 -i로 첨부 → -o로 최종 응답 캡처. 사전 `codex` 설치/로그인 필요.
   llm:
     provider: claude-cli
     # 비전(화면 캡처) 사용 정책. triage를 지원하는 provider(anthropic/gemini)에서만 의미 있음.
