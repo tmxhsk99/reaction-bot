@@ -52,6 +52,30 @@ public class ClaudeService implements LlmProvider {
               - 애매하면 PASS. 침묵이 미덕.
             """;
 
+    /**
+     * multimodal-mode=ai-decide 일 때 사용. SPEAK를 두 갈래로 쪼개 vision 필요 여부까지 1차에서 결정.
+     * 캡처/전송 비용·지연 절감. 텍스트 잡담·호명 응답은 화면 없이도 답할 수 있다는 가정.
+     */
+    private static final String TRIAGE_SYSTEM_WITH_VISION = """
+            당신은 스트리밍 코멘터리 봇의 판단기입니다.
+            방금 스트리머가 한 말(텍스트)만 보고 다음 3가지 중 하나를 선택하세요.
+            답은 정확히 다음 라벨 셋 중 하나. 다른 글자 절대 금지: PASS | SPEAK_VISION | SPEAK_TEXT
+
+            PASS:
+              - 시청자에게 안내/설명, NPC 대사 따라하기, 단순 추임새, 단순 화면 상태 언급
+              - 애매하면 PASS
+
+            SPEAK_VISION (화면을 봐야 답할 수 있는 경우):
+              - 게임 사건에 대한 반응 ("오 대박", "이거 뭐야", "여기로 가야 되나")
+              - 화면의 무언가를 지칭/질문 ("이거 어때?", "저거 뭐였지?")
+              - 스트리머가 "야 봐", "이거 봐바" 류로 화면을 가리킴
+
+            SPEAK_TEXT (화면 없이도 답할 수 있는 경우):
+              - 봇 이름 호명 + 텍스트 질문 ("리봇아 너는 뭐 좋아해?", "리봇 잘 지냈어?")
+              - 봇 의견·생각을 묻는 일반 잡담 ("너는 어떻게 생각해?")
+              - 화면 맥락 없는 자기 얘기·회상
+            """;
+
     private final BotProperties properties;
     private final CharacterConfig character;
     private final ConversationHistory history;
@@ -78,7 +102,7 @@ public class ClaudeService implements LlmProvider {
     }
 
     @Override
-    public boolean triage(String userText) {
+    public TriageResult triage(String userText, boolean needsVisionDecision) {
         String input = (userText == null || userText.isBlank())
                 ? "(자동 트리거)"
                 : userText;
@@ -89,27 +113,54 @@ public class ClaudeService implements LlmProvider {
                 .content(input)
                 .build());
 
-        String systemPrompt = TRIAGE_SYSTEM + passCounter.buildNudge("triage");
+        String basePrompt = needsVisionDecision ? TRIAGE_SYSTEM_WITH_VISION : TRIAGE_SYSTEM;
+        String systemPrompt = basePrompt + passCounter.buildNudge("triage");
+
+        // ai-decide는 라벨이 더 길어서 토큰 여유. 5~12 정도면 충분.
+        long maxTokens = needsVisionDecision ? 16L : 10L;
 
         MessageCreateParams params = MessageCreateParams.builder()
                 .model(properties.getAnthropic().getTriageModel())
-                .maxTokens(10L)
+                .maxTokens(maxTokens)
                 .system(systemPrompt)
                 .messages(messages)
                 .build();
 
-        log.debug("Triage 호출 (Haiku, 텍스트 전용). 연속PASS: {}", passCounter.get());
+        log.debug("Triage 호출 (Haiku, 텍스트 전용, vision-decide={}). 연속PASS: {}",
+                needsVisionDecision, passCounter.get());
         Message response = client.messages().create(params);
-        String raw = extractText(response).toUpperCase().replaceAll("[^A-Z]", "");
+        String raw = extractText(response).toUpperCase().replaceAll("[^A-Z_]", "");
 
-        boolean speak = raw.contains("SPEAK");
-        log.info("Triage 결과: {} (raw='{}', 연속PASS={})",
-                speak ? "SPEAK" : "PASS", raw, passCounter.get());
+        TriageResult result = parseTriageResult(raw, needsVisionDecision);
+        log.info("Triage 결과: {} (raw='{}', 연속PASS={})", result, raw, passCounter.get());
 
-        if (!speak) {
+        if (result == TriageResult.PASS) {
             passCounter.increment();
         }
-        return speak;
+        return result;
+    }
+
+    /**
+     * - 2-way 모드(needsVisionDecision=false): "SPEAK" 포함하면 SPEAK_WITH_VISION (기존 동작 유지),
+     *                                         아니면 PASS.
+     * - 3-way 모드: "SPEAK_TEXT" 우선 매칭 → SPEAK_VISION → 둘 다 아니면 PASS.
+     *   (모델이 라벨 변형을 뱉어도 토큰 유사도로 best-effort)
+     */
+    private static TriageResult parseTriageResult(String normalized, boolean threeWay) {
+        if (!threeWay) {
+            return normalized.contains("SPEAK") ? TriageResult.SPEAK_WITH_VISION : TriageResult.PASS;
+        }
+        if (normalized.contains("SPEAKTEXT") || normalized.contains("SPEAK_TEXT")) {
+            return TriageResult.SPEAK_TEXT_ONLY;
+        }
+        if (normalized.contains("SPEAKVISION") || normalized.contains("SPEAK_VISION")) {
+            return TriageResult.SPEAK_WITH_VISION;
+        }
+        // "SPEAK"만 단독으로 왔으면 안전하게 vision으로 (캡처해도 손해 적음)
+        if (normalized.contains("SPEAK")) {
+            return TriageResult.SPEAK_WITH_VISION;
+        }
+        return TriageResult.PASS;
     }
 
     @Override
@@ -153,6 +204,36 @@ public class ClaudeService implements LlmProvider {
 
         history.addAssistant(raw);
         passCounter.reset();
+        return raw;
+    }
+
+    @Override
+    public String generateIdleComment(String idleSystemPrompt, String triggerText, String base64JpegImage) {
+        String input = (triggerText == null || triggerText.isBlank())
+                ? "(능동 트리거)"
+                : triggerText;
+
+        // idle은 캐릭터 프롬프트도, 히스토리도, pokemon 컨텍스트도, passCounter nudge도 사용 안 함.
+        // 가벼운 혼잣말 톤이 목적. 시스템 프롬프트는 호출자가 준 idleSystemPrompt만 사용.
+        List<MessageParam> messages = new ArrayList<>();
+        messages.add(buildLastUserMessage(input, base64JpegImage));
+
+        MessageCreateParams params = MessageCreateParams.builder()
+                .model(properties.getAnthropic().getModel())
+                .maxTokens((long) properties.getAnthropic().getMaxTokens())
+                .system(idleSystemPrompt)
+                .messages(messages)
+                .build();
+
+        log.debug("Idle comment 호출 (Sonnet, 이미지: {})", base64JpegImage != null);
+        Message response = client.messages().create(params);
+        String raw = extractText(response).trim();
+        log.info("Idle 봇 raw 응답: {}", raw);
+
+        String normalized = raw.replaceAll("[.\"'\\s]", "").toUpperCase();
+        if (normalized.equals("PASS") || normalized.isEmpty()) {
+            return PASS;
+        }
         return raw;
     }
 

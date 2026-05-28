@@ -143,10 +143,10 @@ public class OllamaService implements LlmProvider {
         return properties.getOllama().isVision();
     }
 
-    /** 단일 호출 모드라 실제로 호출되지 않지만 인터페이스 계약상 항상 SPEAK. */
+    /** 단일 호출 모드라 실제로 호출되지 않지만 인터페이스 계약상 항상 SPEAK_WITH_VISION. */
     @Override
-    public boolean triage(String userText) {
-        return true;
+    public TriageResult triage(String userText, boolean needsVisionDecision) {
+        return TriageResult.SPEAK_WITH_VISION;
     }
 
     @Override
@@ -210,6 +210,43 @@ public class OllamaService implements LlmProvider {
         return sanitized;
     }
 
+    @Override
+    public String generateIdleComment(String idleSystemPrompt, String triggerText, String base64JpegImage) {
+        String input = (triggerText == null || triggerText.isBlank())
+                ? "(능동 트리거)"
+                : triggerText;
+
+        // 캐릭터/히스토리/포켓몬/passCounter nudge/assertive nudge 전부 미사용.
+        // 다만 ollama 백엔드 자체 안정성을 위한 토글(/no_think, extraSystemPrompt)은 유지.
+        String systemPrompt = idleSystemPrompt;
+        String extra = properties.getOllama().getExtraSystemPrompt();
+        if (extra != null && !extra.isBlank()) {
+            systemPrompt = systemPrompt + "\n\n" + extra;
+        }
+        if (!properties.getOllama().isThink()) {
+            systemPrompt = systemPrompt + "\n\n/no_think";
+        }
+
+        String raw;
+        try {
+            // 히스토리 무관 호출이 필요해서 단발 메시지로 직접 호출.
+            raw = callOllamaSingle(systemPrompt, input, base64JpegImage);
+        } catch (Exception e) {
+            log.error("Ollama idle 호출 실패", e);
+            return PASS;
+        }
+
+        String cleaned = stripThinkBlocks(raw).trim();
+        String sanitized = sanitizeOutput(cleaned);
+        log.info("Idle 봇 응답: {}", sanitized);
+
+        String normalized = sanitized.replaceAll("[.\"'\\s]", "").toUpperCase();
+        if (normalized.equals("PASS") || normalized.isEmpty()) {
+            return PASS;
+        }
+        return sanitized;
+    }
+
     /** TTS로 흘러갈 발화 최대 문장 수. 캐릭터 룰("절대 두 문장 넘기지 마")과 일치. */
     private static final int MAX_SENTENCES = 2;
 
@@ -261,46 +298,16 @@ public class OllamaService implements LlmProvider {
                 || c == '。' || c == '？' || c == '！';
     }
 
+    /**
+     * 히스토리 포함 호출 (일반 reaction 발화용).
+     * 마지막 turn은 currentUserInput이라 가정. 과거 턴엔 이미지 미첨부(토큰/VRAM 절약).
+     */
     private String callOllama(String systemPrompt, String currentUserInput, String base64JpegImage) throws Exception {
-        BotProperties.Ollama ollama = properties.getOllama();
-
-        ObjectNode body = mapper.createObjectNode();
-        body.put("model", ollama.getModel());
-        body.put("stream", false);
-        // qwen3 thinking 모드 토글. Ollama 0.9+는 top-level "think" 지원. 구버전이면 무시됨.
-        body.put("think", ollama.isThink());
-        // 모델 메모리 유지 시간 ("10m", "1h", "-1" 등). 매 호출마다 갱신되어 콜드 로드 방지.
-        body.put("keep_alive", ollama.getKeepAlive());
-
-        ObjectNode options = mapper.createObjectNode();
-        options.put("num_predict", ollama.getMaxTokens());
-        // 컨텍스트 윈도우 명시. VL 모델은 KV-cache가 VRAM을 크게 잡아먹어 OOM 유발 가능.
-        // 빈 값이면 모델 디폴트(보통 4096) 사용.
-        if (ollama.getNumCtx() != null) {
-            options.put("num_ctx", ollama.getNumCtx());
-        }
-        if (ollama.getTemperature() != null) {
-            options.put("temperature", ollama.getTemperature());
-        }
-        if (ollama.getTopP() != null) {
-            options.put("top_p", ollama.getTopP());
-        }
-        if (ollama.getRepeatPenalty() != null) {
-            options.put("repeat_penalty", ollama.getRepeatPenalty());
-        }
-        if (ollama.getRepeatLastN() != null) {
-            options.put("repeat_last_n", ollama.getRepeatLastN());
-        }
-        body.set("options", options);
+        ObjectNode body = buildOllamaBody();
 
         ArrayNode messages = mapper.createArrayNode();
-        ObjectNode sys = mapper.createObjectNode();
-        sys.put("role", "system");
-        sys.put("content", systemPrompt);
-        messages.add(sys);
+        addSystem(messages, systemPrompt);
 
-        // 마지막 turn은 방금 add한 현재 입력이므로 size-1까지가 과거 히스토리.
-        // 과거 턴엔 이미지를 다시 보내지 않음 (토큰·VRAM 절약, 최신 화면이 중요).
         List<ConversationHistory.Turn> turns = history.snapshot();
         for (int i = 0; i < turns.size() - 1; i++) {
             ConversationHistory.Turn turn = turns.get(i);
@@ -309,19 +316,73 @@ public class OllamaService implements LlmProvider {
             msg.put("content", turn.content());
             messages.add(msg);
         }
-        ObjectNode current = mapper.createObjectNode();
-        current.put("role", "user");
-        current.put("content", currentUserInput);
-        // VL 모델용 이미지 첨부. Ollama /api/chat 컨벤션: message.images = [base64, ...]
+        messages.add(buildUserMessage(currentUserInput, base64JpegImage));
+        body.set("messages", messages);
+
+        log.debug("Ollama 호출. 메시지 수: {}, model: {}, 이미지: {}",
+                messages.size(), properties.getOllama().getModel(), base64JpegImage != null);
+        return postOllamaChat(body);
+    }
+
+    /** 히스토리 없이 시스템 프롬프트 + 단일 유저 메시지로 호출. idle 발화용. */
+    private String callOllamaSingle(String systemPrompt, String userInput, String base64JpegImage) throws Exception {
+        ObjectNode body = buildOllamaBody();
+
+        ArrayNode messages = mapper.createArrayNode();
+        addSystem(messages, systemPrompt);
+        messages.add(buildUserMessage(userInput, base64JpegImage));
+        body.set("messages", messages);
+
+        log.debug("Ollama idle 호출. model: {}, 이미지: {}",
+                properties.getOllama().getModel(), base64JpegImage != null);
+        return postOllamaChat(body);
+    }
+
+    /** options / model / keep_alive 등 공통 본문 빌드. messages는 호출자가 채움. */
+    private ObjectNode buildOllamaBody() {
+        BotProperties.Ollama ollama = properties.getOllama();
+        ObjectNode body = mapper.createObjectNode();
+        body.put("model", ollama.getModel());
+        body.put("stream", false);
+        // qwen3 thinking 모드 토글. Ollama 0.9+는 top-level "think" 지원. 구버전이면 무시됨.
+        body.put("think", ollama.isThink());
+        // 모델 메모리 유지 시간. 매 호출마다 갱신되어 콜드 로드 방지.
+        body.put("keep_alive", ollama.getKeepAlive());
+
+        ObjectNode options = mapper.createObjectNode();
+        options.put("num_predict", ollama.getMaxTokens());
+        // VL 모델 KV-cache OOM 방지용으로 num_ctx 명시 권장. null이면 모델 디폴트(보통 4096).
+        if (ollama.getNumCtx() != null) options.put("num_ctx", ollama.getNumCtx());
+        if (ollama.getTemperature() != null) options.put("temperature", ollama.getTemperature());
+        if (ollama.getTopP() != null) options.put("top_p", ollama.getTopP());
+        if (ollama.getRepeatPenalty() != null) options.put("repeat_penalty", ollama.getRepeatPenalty());
+        if (ollama.getRepeatLastN() != null) options.put("repeat_last_n", ollama.getRepeatLastN());
+        body.set("options", options);
+        return body;
+    }
+
+    private void addSystem(ArrayNode messages, String systemPrompt) {
+        ObjectNode sys = mapper.createObjectNode();
+        sys.put("role", "system");
+        sys.put("content", systemPrompt);
+        messages.add(sys);
+    }
+
+    /** VL 모델용 이미지 첨부 컨벤션: message.images = [base64, ...]. */
+    private ObjectNode buildUserMessage(String content, String base64JpegImage) {
+        ObjectNode user = mapper.createObjectNode();
+        user.put("role", "user");
+        user.put("content", content);
         if (base64JpegImage != null && !base64JpegImage.isBlank()) {
             ArrayNode images = mapper.createArrayNode();
             images.add(base64JpegImage);
-            current.set("images", images);
+            user.set("images", images);
         }
-        messages.add(current);
+        return user;
+    }
 
-        body.set("messages", messages);
-
+    private String postOllamaChat(ObjectNode body) throws Exception {
+        BotProperties.Ollama ollama = properties.getOllama();
         String endpoint = stripTrailingSlash(ollama.getBaseUrl()) + "/api/chat";
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(endpoint))
@@ -329,9 +390,6 @@ public class OllamaService implements LlmProvider {
                 .timeout(Duration.ofSeconds(ollama.getRequestTimeoutSec()))
                 .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body)))
                 .build();
-
-        log.debug("Ollama 호출. 메시지 수: {}, model: {}, 이미지: {}",
-                messages.size(), ollama.getModel(), base64JpegImage != null);
         HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
         if (resp.statusCode() / 100 != 2) {
             throw new RuntimeException("Ollama HTTP " + resp.statusCode() + ": " + resp.body());
