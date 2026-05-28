@@ -3,7 +3,7 @@ package com.jhkim.reactionbot.service;
 /**
  * LLM provider 추상화. Claude / Gemini / 로컬 Ollama 같은 백엔드를 갈아끼울 수 있게 함.
  * 기본은 2단계 흐름:
- *   - triage(): 저렴한 모델로 PASS/SPEAK만 판단
+ *   - triage(): 저렴한 모델로 PASS/SPEAK + (옵션) vision 필요 여부 판단
  *   - generateComment(): 고품질 모델로 실제 코멘트 생성
  * 로컬 LLM처럼 호출 비용이 무관한 경우 hasSeparateTriage()=false로 1회 호출로 단축 가능.
  */
@@ -13,17 +13,39 @@ public interface LlmProvider {
     String PASS = "__PASS__";
 
     /**
-     * PASS/SPEAK 판단만. 히스토리에 영향 없음.
-     * 상용 API 비용 절감을 위해 1차 판단에는 이미지를 보내지 않고 텍스트만 사용.
-     * @return true=SPEAK, false=PASS
+     * triage 결과.
+     *  - PASS              : 봇이 끼어들 상황 아님. 호출 종료.
+     *  - SPEAK_WITH_VISION : 발화하되 화면 캡처 필요 (화면 의존 코멘트).
+     *  - SPEAK_TEXT_ONLY   : 발화하되 화면 캡처 불필요 (텍스트 잡담·호명 응답 등). 캡처 비용/지연 절감.
+     * multimodal-mode=always일 때는 SPEAK_TEXT_ONLY가 와도 orchestrator가 캡처를 강제할 수 있음.
      */
-    boolean triage(String userText);
+    enum TriageResult { PASS, SPEAK_WITH_VISION, SPEAK_TEXT_ONLY }
 
     /**
-     * 실제 코멘트 생성. 히스토리에 추가됨.
+     * PASS/SPEAK 판단만. 히스토리에 영향 없음.
+     * 상용 API 비용 절감을 위해 1차 판단에는 이미지를 보내지 않고 텍스트만 사용.
+     * @param userText 스트리머 발화 텍스트
+     * @param needsVisionDecision true면 SPEAK_WITH_VISION / SPEAK_TEXT_ONLY 구분도 함께 판단,
+     *                            false면 SPEAK일 때 항상 SPEAK_WITH_VISION 반환 (기존 동작)
+     */
+    TriageResult triage(String userText, boolean needsVisionDecision);
+
+    /**
+     * 실제 코멘트 생성. 히스토리에 추가됨. 캐릭터 시스템 프롬프트(character.yml) 사용.
      * @return 봇 멘트. provider가 PASS 의도일 때는 {@link #PASS} 반환.
      */
     String generateComment(String userText, String base64JpegImage);
+
+    /**
+     * Idle 발화 전용 호출. character.yml 캐릭터 프롬프트는 사용하지 않고,
+     * 주어진 idleSystemPrompt만 시스템 프롬프트로 사용. 히스토리는 영향 없음 (참조도/추가도 X).
+     * 평소 페르소나가 너무 무거워서 idle에서 어색해지는 걸 막기 위한 분리.
+     * @param idleSystemPrompt idle 전용으로 설계된 시스템 프롬프트 (스테이지별 다름)
+     * @param triggerText      "(능동 트리거: 한참 조용함...)" 같은 유저 자리 텍스트
+     * @param base64JpegImage  화면 캡처 (vision provider일 때만 의미)
+     * @return 봇 멘트. PASS 의도면 {@link #PASS}.
+     */
+    String generateIdleComment(String idleSystemPrompt, String triggerText, String base64JpegImage);
 
     /**
      * triage()를 별도 호출로 수행할지.

@@ -35,6 +35,12 @@ public class BotProperties {
     public static class Llm {
         // "anthropic" | "gemini" | "ollama" — 어느 provider를 활성화할지
         private String provider = "anthropic";
+        // 비전(화면 캡처) 사용 정책. triage를 지원하는 provider(anthropic/gemini)에서만 의미 있음.
+        // single-call provider(ollama/claude-cli)는 각 provider 설정(ollama.vision 등)을 따름.
+        //   "always"    : 매 호출마다 캡처 (기본, 기존 동작 유지)
+        //   "never"     : 캡처 안 함 (텍스트 전용)
+        //   "ai-decide" : triage 단계에서 LLM이 vision 필요 여부 판단. 화면 의존 발화만 캡처 → 캡처 비용/지연 절감.
+        private String multimodalMode = "always";
     }
 
     @Getter @Setter
@@ -113,6 +119,19 @@ public class BotProperties {
         // claude-cli 백엔드 전용 추가 시스템 지침. character.yml 뒤에 append.
         // 예) 한국어 강제·이모지 금지·줄 수 제한 등. 빈 값이면 미주입.
         private String extraSystemPrompt = "";
+        // true면 매 발화에 triage CLI 호출(PASS/SPEAK 1차 판단) 추가. 본 호출 전에 1번 더 도는 셈.
+        // 트레이드오프:
+        //  + 명백한 PASS 케이스에서 스크린샷 저장/Read tool 호출/큰 모델 추론 비용 절약
+        //  + multimodal-mode=ai-decide와 조합하면 SPEAK_TEXT일 때 캡처 자체 생략
+        //  - 매 호출마다 subprocess 콜드스타트(보통 2~4초) 2번 → 본 호출까지 지연 추가
+        //    (구독 한도 안에서는 호출 횟수 자체에 비용은 없음. 시간 비용만 늘어남)
+        // 권장: 호명-전용 모드처럼 PASS 빈도가 높은 사용 패턴에서만 ON.
+        private boolean triageEnabled = false;
+        // triage용 모델. 빈 값이면 main model(executable=cfg.model)과 동일.
+        // Haiku가 5~10배 빠르므로 triage용으로 추천. 예: "claude-haiku-4-5-20251001"
+        private String triageModel = "claude-haiku-4-5";
+        // triage CLI 호출 타임아웃 (s). 본 호출보다 짧게.
+        private int triageTimeoutSec = 15;
     }
 
     @Getter @Setter
@@ -188,9 +207,20 @@ public class BotProperties {
     @Getter @Setter
     public static class IdleTrigger {
         private boolean enabled;
-        private int silenceThresholdMs;     // 유저 발화 후 N ms 침묵 시 발동
-        private int minSinceBotMs;          // 봇 마지막 발화 이후 N ms 이상 지났을 때만
-        private int checkIntervalMs;        // 스케줄러 체크 주기
+        // 2단계 ramping. light 먼저 발동 → 그 후에도 계속 조용하면 topic 단계로 격상.
+        // light : 가볍게 한 마디 ("뭐 해?", "지루해~")
+        // topic : 화면 보고 새 화제 던지기 ("아 그 아이템 처음 봐", "이거 어떻게 깰 거야?")
+        private int lightThresholdMs = 60000;        // 유저 침묵 N ms 시 light 단계 발동
+        private int topicThresholdMs = 180000;       // 유저 침묵 N ms 시 topic 단계 격상. 0/음수면 비활성(light만)
+        private int minSinceBotMs = 60000;           // 봇 마지막 발화 이후 N ms 이상 지났을 때만
+        private int checkIntervalMs = 20000;         // 스케줄러 체크 주기
+        // idle 전용 시스템 프롬프트. character.yml 캐릭터 프롬프트와 분리.
+        // 평소 페르소나는 "반응"에 최적화되어 idle에서 그대로 쓰면 너무 길고 진지해지는 걸 막기 위함.
+        // {name} / {streamer} placeholder 치환됨. 빈 값이면 내장 디폴트 사용.
+        private String lightPromptTemplate = "";
+        private String topicPromptTemplate = "";
+
+        public enum Stage { LIGHT, TOPIC }
     }
 
     @Getter @Setter

@@ -54,6 +54,22 @@ reaction-bot:
     # 적극성 nudge 자동 주입 여부. ollama와 동일 컨셉.
     assertive: true
 
+    # PASS/SPEAK 1차 판단을 별도 CLI 호출로 수행할지.
+    # true 시 매 발화에 triage CLI 호출 추가 → subprocess 콜드스타트 2번 (~+2-4초).
+    # 트레이드오프:
+    #  + 명백한 PASS 케이스에서 스크린샷 저장/Read tool/큰 모델 추론 건너뜀
+    #  + llm.multimodal-mode=ai-decide와 조합 시 SPEAK_TEXT일 때 캡처 자체 생략
+    #  - 매 호출마다 latency 추가
+    # 권장: 호명-전용 모드(speech.respond-only-when-addressed=true)처럼
+    #       PASS 빈도가 높은 사용 패턴에서만 ON.
+    triage-enabled: true
+
+    # triage용 모델. 빈 값이면 main model과 동일. Haiku가 빨라서 추천.
+    triage-model: "claude-haiku-4-5"
+
+    # triage CLI 호출 타임아웃(초). 본 호출보다 짧게.
+    triage-timeout-sec: 15
+
     # claude-cli 전용 추가 시스템 지침. character.yml의 system-prompt 뒤에 append.
     # 한국어 강제·이모지 금지·줄 수 제한·라벨 prefix 금지 등 출력 정제 룰.
     extra-system-prompt: |

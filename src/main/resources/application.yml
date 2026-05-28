@@ -25,6 +25,13 @@ reaction-bot:
   #                임시 PNG로 스크린샷 저장 → CLI에 경로 전달 → stdout 응답 캡처. 사전 `claude` 로그인 필요.
   llm:
     provider: claude-cli
+    # 비전(화면 캡처) 사용 정책. triage를 지원하는 provider(anthropic/gemini)에서만 의미 있음.
+    #   "always"    : 매 호출마다 캡처 (기본, 기존 동작 유지). 화면 의존 봇이면 안전한 선택.
+    #   "never"     : 캡처 안 함 (텍스트 전용).
+    #   "ai-decide" : triage 단계에서 LLM이 vision 필요 여부 판단 (SPEAK_VISION / SPEAK_TEXT).
+    #                 화면 의존 발화만 캡처 → 텍스트 잡담·호명 응답에선 캡처 비용/지연 절감.
+    # single-call provider(ollama)는 이 설정 무시. claude-cli는 triage-enabled=true일 때만 따름.
+    multimodal-mode: ai-decide
 
   # 대화 히스토리
   history:
@@ -101,7 +108,8 @@ reaction-bot:
     nudge-after-pass-count: 3
     # true면 봇 이름 호명("리봇아!") 시에만 응답. 일반 잡담엔 LLM 호출 자체를 안 함 → 완전 수동.
     # false면 모든 발화를 LLM이 보고 PASS/SPEAK 판단 (적극 모드).
-    respond-only-when-addressed: false
+    # idle-trigger.enabled=true와 조합 권장 — 호명 응답 + 침묵 시 능동 발문.
+    respond-only-when-addressed: true
     # 정규식 prefilter — 이 패턴 매칭하면 Claude 호출 자체를 안 함 (토큰 절약)
     # Java Pattern 문법. 발화 전체 문자열 대상.
     filler-patterns:
@@ -111,13 +119,21 @@ reaction-bot:
       - "^[ㄱ-ㅎㅏ-ㅣ\\s.?!~]+$"                          # 자음/모음 단독 ("ㅋ", "ㄴ", "ㅇㅇ", "ㅎ ㅎ" 등 STT가 버튼소리에 뱉는 자모)
       - "^.{1,2}[.?!~…]*$"                                # 1~2글자 단발 (min-text-length로 대부분 컷되지만 안전망)
 
-  # 능동 발문 - 정적 시간이 길면 봇이 가끔 먼저 말 걸기.
-  # 수동 모드(respond-only-when-addressed=true)에선 비활성화해서 봇이 먼저 말 걸지 않게 함.
+  # 능동 발문 - 정적 시간이 길면 봇이 가끔 먼저 말 걸기. 2단계 ramping.
+  #  LIGHT : 유저가 light-threshold-ms 이상 조용 → 가벼운 한 마디 ("뭐 해?", "지루해~")
+  #  TOPIC : 유저가 topic-threshold-ms 이상 조용 → 화면 보고 새 화제 던지기
+  # 호명-전용 모드(respond-only-when-addressed=true)와 조합 권장 — "호명 응답 + 침묵 시 능동 발문" 패턴.
   idle-trigger:
-    enabled: false
-    silence-threshold-ms: 60000    # 유저가 1분 이상 조용하면
-    min-since-bot-ms: 60000        # 봇이 마지막으로 말한지 1분 이상 지났어야
-    check-interval-ms: 20000        # 스케줄러 20초마다 체크
+    enabled: true
+    light-threshold-ms: 60000        # 유저가 1분 이상 조용하면 LIGHT 발동
+    topic-threshold-ms: 180000       # 유저가 3분 이상 조용하면 TOPIC 격상. 0/음수면 TOPIC 비활성(LIGHT만).
+    min-since-bot-ms: 60000          # 봇이 마지막으로 말한지 1분 이상 지났어야
+    check-interval-ms: 20000         # 스케줄러 체크 주기
+    # idle 전용 시스템 프롬프트. 빈 값이면 CharacterConfig의 내장 디폴트 사용.
+    # 비워두는 게 기본. 캐릭터 톤을 더 강하게 묻히고 싶으면 여기에 짧은 페르소나 + 상황 지시를 적기.
+    # {name} / {streamer} placeholder 치환됨.
+    light-prompt-template: ""
+    topic-prompt-template: ""
 
   # 포켓몬 컨텍스트 - 발화에 포켓몬 이름 감지되면 PokeAPI에서 정보 받아와서 LLM에 주입
   pokemon:

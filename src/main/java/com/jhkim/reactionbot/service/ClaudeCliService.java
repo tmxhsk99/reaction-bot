@@ -73,6 +73,47 @@ public class ClaudeCliService implements LlmProvider {
             - 매번 다른 각도(놀림/응원/예측/딴지/자랑)로 변주.
             """;
 
+    /** triage-enabled=true일 때 사용. ClaudeService/GeminiService와 동일 정책 (라벨 단답). */
+    private static final String TRIAGE_SYSTEM = """
+            당신은 스트리밍 코멘터리 봇의 판단기입니다.
+            방금 스트리머가 한 말(텍스트)만 보고, 봇이 "지금 한 마디 해도 될 상황인가" 판단하세요.
+            (비용 절감을 위해 1차 판단에는 화면 이미지가 제공되지 않습니다. 텍스트만으로 보수적으로 판단.)
+            답은 정확히 SPEAK 또는 PASS 둘 중 하나. 다른 글자 절대 금지.
+
+            SPEAK 기준:
+              - 게임에 의미있는 사건이 있고 스트리머도 그에 대해 말함
+              - 스트리머가 명확히 반응 유도 ("야 봐", "오 대박", "이거 뭐야")
+              - 한참 조용했다가 의미 있는 발화
+
+            PASS 기준 (대부분 PASS):
+              - 시청자에게 안내/설명하는 중
+              - 게임 NPC/캐릭터 대사 따라하기
+              - 의미 없는 추임새, 헛기침
+              - 단순 화면 상태 언급만
+              - 애매하면 PASS. 침묵이 미덕.
+            """;
+
+    /** multimodal-mode=ai-decide 전용. SPEAK를 vision 필요 여부로 둘로 쪼갬. */
+    private static final String TRIAGE_SYSTEM_WITH_VISION = """
+            당신은 스트리밍 코멘터리 봇의 판단기입니다.
+            방금 스트리머가 한 말(텍스트)만 보고 다음 3가지 중 하나를 선택하세요.
+            답은 정확히 다음 라벨 셋 중 하나. 다른 글자 절대 금지: PASS | SPEAK_VISION | SPEAK_TEXT
+
+            PASS:
+              - 시청자에게 안내/설명, NPC 대사 따라하기, 단순 추임새, 단순 화면 상태 언급
+              - 애매하면 PASS
+
+            SPEAK_VISION (화면을 봐야 답할 수 있는 경우):
+              - 게임 사건에 대한 반응 ("오 대박", "이거 뭐야", "여기로 가야 되나")
+              - 화면의 무언가를 지칭/질문 ("이거 어때?", "저거 뭐였지?")
+              - 스트리머가 "야 봐", "이거 봐바" 류로 화면을 가리킴
+
+            SPEAK_TEXT (화면 없이도 답할 수 있는 경우):
+              - 봇 이름 호명 + 텍스트 질문 ("리봇아 너는 뭐 좋아해?", "리봇 잘 지냈어?")
+              - 봇 의견·생각을 묻는 일반 잡담 ("너는 어떻게 생각해?")
+              - 화면 맥락 없는 자기 얘기·회상
+            """;
+
     private final BotProperties properties;
     private final CharacterConfig character;
     private final ConversationHistory history;
@@ -214,9 +255,14 @@ public class ClaudeCliService implements LlmProvider {
         return 0;
     };
 
+    /**
+     * triage-enabled 설정에 따라 동적. true면 orchestrator가 2단계 호출 (triage CLI → main CLI).
+     * subprocess 콜드스타트가 2번 도는 비용을 감수하고 캡처/Read tool 호출/큰 모델 추론을
+     * 조건부로 건너뛸 가치가 있을 때만 ON.
+     */
     @Override
     public boolean hasSeparateTriage() {
-        return false;
+        return properties.getClaudeCli().isTriageEnabled();
     }
 
     @Override
@@ -224,10 +270,46 @@ public class ClaudeCliService implements LlmProvider {
         return true;
     }
 
-    /** 단일 호출 모드라 호출되지 않지만 인터페이스 계약상 항상 SPEAK. */
+    /** PASS/SPEAK 1차 판단을 별도 CLI 호출로 수행. triage-enabled=false면 호출되지 않음. */
     @Override
-    public boolean triage(String userText) {
-        return true;
+    public TriageResult triage(String userText, boolean needsVisionDecision) {
+        String input = (userText == null || userText.isBlank()) ? "(자동 트리거)" : userText;
+        BotProperties.ClaudeCli cfg = properties.getClaudeCli();
+
+        String basePrompt = needsVisionDecision ? TRIAGE_SYSTEM_WITH_VISION : TRIAGE_SYSTEM;
+        // triage는 캐릭터/극중 모드 무관. 라벨 단답만. nudge는 PASS 누적 시 자동 합성.
+        String systemPrompt = basePrompt + passCounter.buildNudge("triage");
+
+        // triage 모델은 cfg.triageModel 우선, 비어있으면 main model.
+        String model = isBlank(cfg.getTriageModel()) ? cfg.getModel() : cfg.getTriageModel();
+
+        String raw;
+        try {
+            // image 안 쓰므로 allowedTools 비움. timeout 짧게.
+            raw = callCliCustom(cfg, systemPrompt, input, model, "", cfg.getTriageTimeoutSec());
+        } catch (Exception e) {
+            // triage 실패 시 안전하게 SPEAK_WITH_VISION (본 호출로 진행, 기존 동작과 유사).
+            log.warn("Triage CLI 호출 실패. SPEAK_WITH_VISION로 폴백: {}", e.getMessage());
+            return TriageResult.SPEAK_WITH_VISION;
+        }
+
+        String normalized = raw.toUpperCase().replaceAll("[^A-Z_]", "");
+        TriageResult result = parseTriageResult(normalized, needsVisionDecision);
+        log.info("Triage 결과 (CLI): {} (raw='{}', 연속PASS={})", result, normalized, passCounter.get());
+
+        if (result == TriageResult.PASS) passCounter.increment();
+        return result;
+    }
+
+    /** ClaudeService와 동일. SPEAK 라벨 변형에 best-effort 매칭. */
+    private static TriageResult parseTriageResult(String normalized, boolean threeWay) {
+        if (!threeWay) {
+            return normalized.contains("SPEAK") ? TriageResult.SPEAK_WITH_VISION : TriageResult.PASS;
+        }
+        if (normalized.contains("SPEAKTEXT") || normalized.contains("SPEAK_TEXT")) return TriageResult.SPEAK_TEXT_ONLY;
+        if (normalized.contains("SPEAKVISION") || normalized.contains("SPEAK_VISION")) return TriageResult.SPEAK_WITH_VISION;
+        if (normalized.contains("SPEAK")) return TriageResult.SPEAK_WITH_VISION;
+        return TriageResult.PASS;
     }
 
     @Override
@@ -289,6 +371,67 @@ public class ClaudeCliService implements LlmProvider {
 
         history.addAssistant(sanitized);
         passCounter.reset();
+        return sanitized;
+    }
+
+    @Override
+    public String generateIdleComment(String idleSystemPrompt, String triggerText, String base64JpegImage) {
+        String input = (triggerText == null || triggerText.isBlank())
+                ? "(능동 트리거)"
+                : triggerText;
+
+        BotProperties.ClaudeCli cfg = properties.getClaudeCli();
+
+        // 캐릭터/히스토리/포켓몬/nudge/assertive 미적용. CLI 안정성용 extraSystemPrompt만 append.
+        String systemPrompt = idleSystemPrompt;
+        String extra = cfg.getExtraSystemPrompt();
+        if (!isBlank(extra)) {
+            systemPrompt = systemPrompt + "\n\n" + extra;
+        }
+
+        Path imagePath = null;
+        if (base64JpegImage != null && !base64JpegImage.isBlank()) {
+            try {
+                imagePath = writeTempImage(base64JpegImage, cfg.getTempImageDir());
+            } catch (Exception e) {
+                log.warn("Idle용 임시 스크린샷 저장 실패. 이미지 없이 진행: {}", e.getMessage());
+            }
+        }
+
+        // 히스토리 없는 단발 프롬프트로 직접 합성.
+        StringBuilder sb = new StringBuilder();
+        if (imagePath != null) {
+            sb.append("[현재 화면 스크린샷]\n")
+              .append(imagePath.toAbsolutePath())
+              .append("\n위 경로의 이미지를 Read로 한 번만 확인하고, 화면 + 아래 트리거에 한 줄로 반응하라.\n\n");
+        }
+        sb.append("[능동 트리거]\n").append(input);
+        String userPrompt = sb.toString();
+
+        String raw;
+        try {
+            raw = callCli(cfg, systemPrompt, userPrompt);
+        } catch (Exception e) {
+            log.error("Claude CLI idle 호출 실패", e);
+            return PASS;
+        } finally {
+            if (imagePath != null) {
+                try {
+                    Files.deleteIfExists(imagePath);
+                } catch (IOException io) {
+                    log.warn("Idle용 임시 스크린샷 삭제 실패 ({}): {}", imagePath, io.getMessage());
+                }
+            }
+        }
+
+        String cleaned = raw == null ? "" : raw.trim();
+        String sanitized = sanitizeOutput(cleaned);
+        log.info("Idle 봇 응답: {}", sanitized);
+
+        String normalized = sanitized.replaceAll("[.\"'\\s]", "").toUpperCase();
+        if (normalized.equals("PASS") || normalized.isEmpty()) {
+            return PASS;
+        }
         return sanitized;
     }
 
@@ -355,7 +498,19 @@ public class ClaudeCliService implements LlmProvider {
 
     // ---------- CLI 호출 ----------
 
+    /** 본 호출용. cfg 기본값(model/allowedTools/timeoutSec) 사용. */
     private String callCli(BotProperties.ClaudeCli cfg, String systemPrompt, String userPrompt) throws Exception {
+        return callCliCustom(cfg, systemPrompt, userPrompt, cfg.getModel(), cfg.getAllowedTools(), cfg.getTimeoutSec());
+    }
+
+    /**
+     * 모델/도구/타임아웃을 명시적으로 줄 수 있는 변형. triage 호출 같이 다른 모델·짧은 타임아웃이 필요할 때 사용.
+     * @param modelOverride    빈 값이면 --model 생략 (CLI 기본)
+     * @param allowedToolsOverride 빈 값이면 --allowedTools 생략 (예: triage엔 Read 불필요)
+     * @param timeoutSec       이 호출에 적용할 wait 최대 초
+     */
+    private String callCliCustom(BotProperties.ClaudeCli cfg, String systemPrompt, String userPrompt,
+                                 String modelOverride, String allowedToolsOverride, int timeoutSec) throws Exception {
         List<String> cmd = new ArrayList<>();
         cmd.add(resolvedExecutable);
         cmd.add("--print");                                  // non-interactive
@@ -364,13 +519,13 @@ public class ClaudeCliService implements LlmProvider {
         // 캐릭터 지침을 무시하고 "혼동이 생겼습니다. 저는 Claude Code입니다..." 식으로 RP 거부함.
         cmd.add("--system-prompt");
         cmd.add(systemPrompt);
-        if (!isBlank(cfg.getModel())) {
+        if (!isBlank(modelOverride)) {
             cmd.add("--model");
-            cmd.add(cfg.getModel());
+            cmd.add(modelOverride);
         }
-        if (!isBlank(cfg.getAllowedTools())) {
+        if (!isBlank(allowedToolsOverride)) {
             cmd.add("--allowedTools");
-            cmd.add(cfg.getAllowedTools());
+            cmd.add(allowedToolsOverride);
         }
         if (!cfg.isUseStdinPrompt()) {
             cmd.add(userPrompt);
@@ -385,8 +540,8 @@ public class ClaudeCliService implements LlmProvider {
         pb.environment().put("LANG", "en_US.UTF-8");
         pb.redirectErrorStream(false);
 
-        log.debug("Claude CLI 호출. argc={}, stdin={}, model={}, allowedTools={}",
-                cmd.size(), cfg.isUseStdinPrompt(), cfg.getModel(), cfg.getAllowedTools());
+        log.debug("Claude CLI 호출. argc={}, stdin={}, model={}, allowedTools={}, timeout={}s",
+                cmd.size(), cfg.isUseStdinPrompt(), modelOverride, allowedToolsOverride, timeoutSec);
 
         long start = System.currentTimeMillis();
         Process proc = pb.start();
@@ -405,13 +560,13 @@ public class ClaudeCliService implements LlmProvider {
         Thread tOut = drainAsync(proc.getInputStream(), out);
         Thread tErr = drainAsync(proc.getErrorStream(), err);
 
-        boolean finished = proc.waitFor(cfg.getTimeoutSec(), TimeUnit.SECONDS);
+        boolean finished = proc.waitFor(timeoutSec, TimeUnit.SECONDS);
         if (!finished) {
             proc.destroyForcibly();
             // 드레이너 잠깐 기다렸다가 부분 출력이라도 로깅
             tOut.join(500);
             tErr.join(500);
-            throw new RuntimeException("Claude CLI timeout (" + cfg.getTimeoutSec() + "s). stderr=" + err);
+            throw new RuntimeException("Claude CLI timeout (" + timeoutSec + "s). stderr=" + err);
         }
         tOut.join(2000);
         tErr.join(500);

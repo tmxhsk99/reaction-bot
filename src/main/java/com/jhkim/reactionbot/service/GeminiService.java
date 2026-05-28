@@ -51,6 +51,27 @@ public class GeminiService implements LlmProvider {
               - 애매하면 PASS. 침묵이 미덕.
             """;
 
+    /** multimodal-mode=ai-decide 전용. SPEAK를 vision 필요 여부로 둘로 쪼갬. */
+    private static final String TRIAGE_SYSTEM_WITH_VISION = """
+            당신은 스트리밍 코멘터리 봇의 판단기입니다.
+            방금 스트리머가 한 말(텍스트)만 보고 다음 3가지 중 하나를 선택하세요.
+            답은 정확히 다음 라벨 셋 중 하나. 다른 글자 절대 금지: PASS | SPEAK_VISION | SPEAK_TEXT
+
+            PASS:
+              - 시청자에게 안내/설명, NPC 대사 따라하기, 단순 추임새, 단순 화면 상태 언급
+              - 애매하면 PASS
+
+            SPEAK_VISION (화면을 봐야 답할 수 있는 경우):
+              - 게임 사건에 대한 반응 ("오 대박", "이거 뭐야", "여기로 가야 되나")
+              - 화면의 무언가를 지칭/질문 ("이거 어때?", "저거 뭐였지?")
+              - 스트리머가 "야 봐", "이거 봐바" 류로 화면을 가리킴
+
+            SPEAK_TEXT (화면 없이도 답할 수 있는 경우):
+              - 봇 이름 호명 + 텍스트 질문 ("리봇아 너는 뭐 좋아해?", "리봇 잘 지냈어?")
+              - 봇 의견·생각을 묻는 일반 잡담 ("너는 어떻게 생각해?")
+              - 화면 맥락 없는 자기 얘기·회상
+            """;
+
     private final BotProperties properties;
     private final CharacterConfig character;
     private final ConversationHistory history;
@@ -76,12 +97,13 @@ public class GeminiService implements LlmProvider {
     }
 
     @Override
-    public boolean triage(String userText) {
+    public TriageResult triage(String userText, boolean needsVisionDecision) {
         String input = (userText == null || userText.isBlank())
                 ? "(자동 트리거)"
                 : userText;
 
-        String systemPrompt = TRIAGE_SYSTEM + passCounter.buildNudge("triage");
+        String basePrompt = needsVisionDecision ? TRIAGE_SYSTEM_WITH_VISION : TRIAGE_SYSTEM;
+        String systemPrompt = basePrompt + passCounter.buildNudge("triage");
 
         List<Content> contents = new ArrayList<>();
         contents.add(Content.builder()
@@ -89,25 +111,43 @@ public class GeminiService implements LlmProvider {
                 .parts(List.of(Part.fromText(input)))
                 .build());
 
+        int maxTokens = needsVisionDecision ? 16 : 10;
         GenerateContentConfig config = GenerateContentConfig.builder()
                 .systemInstruction(Content.fromParts(Part.fromText(systemPrompt)))
-                .maxOutputTokens(10)
+                .maxOutputTokens(maxTokens)
                 .thinkingConfig(ThinkingConfig.builder().thinkingBudget(0).build())
                 .build();
 
-        log.debug("Triage 호출 (Gemini Flash-Lite, 텍스트 전용). 연속PASS: {}", passCounter.get());
+        log.debug("Triage 호출 (Gemini Flash-Lite, 텍스트 전용, vision-decide={}). 연속PASS: {}",
+                needsVisionDecision, passCounter.get());
         GenerateContentResponse response = client.models.generateContent(
                 properties.getGemini().getTriageModel(), contents, config);
-        String raw = safeText(response).toUpperCase().replaceAll("[^A-Z]", "");
+        String raw = safeText(response).toUpperCase().replaceAll("[^A-Z_]", "");
 
-        boolean speak = raw.contains("SPEAK");
-        log.info("Triage 결과: {} (raw='{}', 연속PASS={})",
-                speak ? "SPEAK" : "PASS", raw, passCounter.get());
+        TriageResult result = parseTriageResult(raw, needsVisionDecision);
+        log.info("Triage 결과: {} (raw='{}', 연속PASS={})", result, raw, passCounter.get());
 
-        if (!speak) {
+        if (result == TriageResult.PASS) {
             passCounter.increment();
         }
-        return speak;
+        return result;
+    }
+
+    /** ClaudeService와 동일 로직. SPEAK 라벨 변형에 best-effort 매칭. */
+    private static TriageResult parseTriageResult(String normalized, boolean threeWay) {
+        if (!threeWay) {
+            return normalized.contains("SPEAK") ? TriageResult.SPEAK_WITH_VISION : TriageResult.PASS;
+        }
+        if (normalized.contains("SPEAKTEXT") || normalized.contains("SPEAK_TEXT")) {
+            return TriageResult.SPEAK_TEXT_ONLY;
+        }
+        if (normalized.contains("SPEAKVISION") || normalized.contains("SPEAK_VISION")) {
+            return TriageResult.SPEAK_WITH_VISION;
+        }
+        if (normalized.contains("SPEAK")) {
+            return TriageResult.SPEAK_WITH_VISION;
+        }
+        return TriageResult.PASS;
     }
 
     @Override
@@ -151,6 +191,34 @@ public class GeminiService implements LlmProvider {
 
         history.addAssistant(raw);
         passCounter.reset();
+        return raw;
+    }
+
+    @Override
+    public String generateIdleComment(String idleSystemPrompt, String triggerText, String base64JpegImage) {
+        String input = (triggerText == null || triggerText.isBlank())
+                ? "(능동 트리거)"
+                : triggerText;
+
+        // 캐릭터/히스토리/포켓몬/nudge 전부 미사용. idle 전용 시스템 프롬프트만.
+        List<Content> contents = List.of(buildUserContent(input, base64JpegImage));
+
+        GenerateContentConfig config = GenerateContentConfig.builder()
+                .systemInstruction(Content.fromParts(Part.fromText(idleSystemPrompt)))
+                .maxOutputTokens(properties.getGemini().getMaxTokens())
+                .thinkingConfig(ThinkingConfig.builder().thinkingBudget(0).build())
+                .build();
+
+        log.debug("Idle comment 호출 (Gemini Flash, 이미지: {})", base64JpegImage != null);
+        GenerateContentResponse response = client.models.generateContent(
+                properties.getGemini().getModel(), contents, config);
+        String raw = safeText(response).trim();
+        log.info("Idle 봇 raw 응답: {}", raw);
+
+        String normalized = raw.replaceAll("[.\"'\\s]", "").toUpperCase();
+        if (normalized.equals("PASS") || normalized.isEmpty()) {
+            return PASS;
+        }
         return raw;
     }
 
