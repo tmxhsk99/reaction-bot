@@ -71,7 +71,7 @@ public class ClaudeService implements LlmProvider {
               - 스트리머가 "야 봐", "이거 봐바" 류로 화면을 가리킴
 
             SPEAK_TEXT (화면 없이도 답할 수 있는 경우):
-              - 봇 이름 호명 + 텍스트 질문 ("리봇아 너는 뭐 좋아해?", "리봇 잘 지냈어?")
+              - 봇 이름 호명 + 텍스트 질문 ("{name}아 너는 뭐 좋아해?", "{name} 잘 지냈어?")
               - 봇 의견·생각을 묻는 일반 잡담 ("너는 어떻게 생각해?")
               - 화면 맥락 없는 자기 얘기·회상
             """;
@@ -113,7 +113,7 @@ public class ClaudeService implements LlmProvider {
                 .content(input)
                 .build());
 
-        String basePrompt = needsVisionDecision ? TRIAGE_SYSTEM_WITH_VISION : TRIAGE_SYSTEM;
+        String basePrompt = character.substitute(needsVisionDecision ? TRIAGE_SYSTEM_WITH_VISION : TRIAGE_SYSTEM);
         String systemPrompt = basePrompt + passCounter.buildNudge("triage");
 
         // ai-decide는 라벨이 더 길어서 토큰 여유. 5~12 정도면 충분.

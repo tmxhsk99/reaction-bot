@@ -85,8 +85,9 @@ public class CharacterConfig {
      * {name}/{streamer} placeholder 치환. name/streamerName이 null이어도 NPE 안 나게 방어.
      * application.yml에 ${BOT_NAME:리봇}/${STREAMER_NAME:로크만} 기본값이 있어 보통은 non-null이지만,
      * 환경변수로 빈 값/누락 주입 같은 엣지케이스 대비.
+     * 각 LLM provider가 triage 프롬프트 등의 {name}/{streamer}를 치환할 때도 사용.
      */
-    private String substitute(String s) {
+    public String substitute(String s) {
         if (s == null) return "";
         String n = (this.name == null) ? "" : this.name;
         String st = (this.streamerName == null) ? "" : this.streamerName;
