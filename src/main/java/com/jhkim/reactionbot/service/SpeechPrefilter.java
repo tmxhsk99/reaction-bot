@@ -39,14 +39,53 @@ public class SpeechPrefilter {
             }
         }
 
-        // 봇 이름 + 호격 조사. 예: 리봇야, 리봇아, 리봇!, 리봇?, "리봇" 단독
-        String name = Pattern.quote(character.getName());
+        // 봇 이름 호명 감지. STT가 호격 조사를 붙여 발음하면 종성이 연음되어
+        // 마지막 글자가 뭉개지는 일이 잦음 (예: "리봇아" → "리보사", 호출 실패).
+        // 그래서 마지막 글자는 "초성+중성"만 같으면(종성은 무시) 호명으로 인정한다.
+        //   - 2글자 "리봇": "리" + (ㅂ+ㅗ 음절: 보/봇/봉…)  → "리봇"·"리보" 등
+        //   - 3글자 "라이봇": "라이" + (ㅂ+ㅗ 음절)
+        // 뒤에 붙는 호격 조사/구두점은 기존대로 옵션.
+        String fuzzyName = buildFuzzyName(character.getName());
         directAddressPattern = Pattern.compile(
-                "(^|[\\s,.!?])" + name + "(야|아|이|님)?[\\s,.!?]?",
+                "(^|[\\s,.!?])" + fuzzyName + "(야|아|이|님)?[\\s,.!?]?",
                 Pattern.CASE_INSENSITIVE);
 
         log.info("Prefilter 준비 완료: 필러 {}개, 호명 패턴='{}'",
                 fillerPatterns.size(), directAddressPattern.pattern());
+    }
+
+    private static final int HANGUL_BASE = 0xAC00;     // '가'
+    private static final int HANGUL_LAST = 0xD7A3;     // '힣'
+    private static final int JONGSEONG_COUNT = 28;     // 종성 개수 (받침 없음 포함)
+
+    /**
+     * 봇 이름 호명용 정규식 조각 생성.
+     * 마지막 글자가 완성형 한글이면 "앞 글자들(literal) + 마지막 글자와 초성·중성이 같은 음절군"으로,
+     * 아니면 이름 전체를 literal로 매칭한다.
+     */
+    private String buildFuzzyName(String name) {
+        if (name == null || name.isEmpty()) {
+            return Pattern.quote(name == null ? "" : name);
+        }
+        String lastClass = syllableClass(name.charAt(name.length() - 1));
+        if (lastClass == null) {
+            return Pattern.quote(name); // 마지막 글자가 완성형 한글 아님 → 통째 literal
+        }
+        return Pattern.quote(name.substring(0, name.length() - 1)) + lastClass;
+    }
+
+    /**
+     * 완성형 한글 음절 c와 "초성+중성"이 같은 음절(종성만 다른 28자)을 매칭하는 문자 클래스 반환.
+     * 종성이 연음되어 사라져도("봇"→"보") 같은 클래스에 들어오므로 호명을 놓치지 않으면서,
+     * 중성까지 보므로 초성만 볼 때보다 오인식(예: "리뷰", "리바이벌")이 줄어든다.
+     * 완성형 한글이 아니면 null.
+     */
+    private String syllableClass(char c) {
+        if (c < HANGUL_BASE || c > HANGUL_LAST) return null;
+        int idx = c - HANGUL_BASE;
+        int start = HANGUL_BASE + idx - (idx % JONGSEONG_COUNT); // 같은 초성+중성의 첫 음절(종성 없음)
+        int end = start + JONGSEONG_COUNT - 1;
+        return String.format("[\\u%04X-\\u%04X]", start, end);
     }
 
     public enum Decision {
