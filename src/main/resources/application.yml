@@ -110,11 +110,11 @@ reaction-bot:
     cooldown-ms: 8000
     # 연속 N번 PASS 후 다음 호출에 "이번엔 반드시 응답" 힌트 자동 주입 (적극성 안전망)
     # 0 이면 비활성. 권장: 2~3. respond-only-when-addressed=true 면 무의미.
-    nudge-after-pass-count: 3
+    nudge-after-pass-count: 2
     # true면 봇 이름 호명("리봇아!") 시에만 응답. 일반 잡담엔 LLM 호출 자체를 안 함 → 완전 수동.
     # false면 모든 발화를 LLM이 보고 PASS/SPEAK 판단 (적극 모드).
     # idle-trigger.enabled=true와 조합 권장 — 호명 응답 + 침묵 시 능동 발문.
-    respond-only-when-addressed: true
+    respond-only-when-addressed: false
     # 정규식 prefilter — 이 패턴 매칭하면 Claude 호출 자체를 안 함 (토큰 절약)
     # Java Pattern 문법. 발화 전체 문자열 대상.
     filler-patterns:
