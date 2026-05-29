@@ -11,6 +11,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -59,10 +60,11 @@ public class EdgeTtsService implements TtsService {
         String filename = "tts-" + UUID.randomUUID() + ".mp3";
         Path outputPath = Paths.get(properties.getTts().getOutputDir(), filename);
 
+        // 본문(text)은 stdin으로 전달. 명령줄 인자로 넘기면 따옴표 등 특수문자에서
+        // OS별 인자 인용이 깨져(특히 Windows의 닫히지 않은 ") 뒤 인자들이 흡수됨.
         ProcessBuilder pb = new ProcessBuilder(
                 properties.getTts().getPythonExecutable(),
                 SCRIPT_PATH,
-                "--text", text,
                 "--voice", properties.getTts().getVoice(),
                 "--rate", properties.getTts().getRate(),
                 "--pitch", properties.getTts().getPitch(),
@@ -74,6 +76,12 @@ public class EdgeTtsService implements TtsService {
         try {
             log.debug("Edge TTS 합성 시작: {}", text);
             Process process = pb.start();
+
+            // 본문을 stdin으로 쓰고 닫음 → 스크립트가 sys.stdin에서 읽음.
+            try (OutputStream stdin = process.getOutputStream()) {
+                stdin.write(text.getBytes(StandardCharsets.UTF_8));
+                stdin.flush();
+            }
 
             try (BufferedReader reader = new BufferedReader(
                     new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
