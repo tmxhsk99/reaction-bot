@@ -4,7 +4,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.io.IOException;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -29,11 +28,10 @@ public class AvatarEventService {
         emitter.onTimeout(() -> emitters.remove(emitter));
         emitter.onError(e -> emitters.remove(emitter));
         log.info("아바타 클라이언트 connect (총 {}명)", emitters.size());
-        // 연결 직후 한 번 ping 보내서 정상 연결 확인
-        try {
-            emitter.send(SseEmitter.event().name("hello").data("connected"));
-        } catch (IOException ignored) {
-        }
+        // hello ping 은 보내지 않음: subscribe() 안에서 send() 하면 Spring 이 startAsync() 하기 전에
+        // ServletOutputStream 에 쓰기 시도가 들어가서, 이미 끊긴 연결일 경우 stream 이 ERROR 상태가 되고
+        // 직후 startAsync() 가 "Cannot start async: [ERROR]" IllegalStateException 으로 터짐.
+        // SseEmitter 는 컨트롤러 반환 직후 Spring 이 응답 헤더와 함께 stream 을 자동으로 열어준다.
         return emitter;
     }
 

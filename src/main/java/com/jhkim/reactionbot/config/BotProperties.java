@@ -146,6 +146,11 @@ public class BotProperties {
         private String triageModel = "claude-haiku-4-5";
         // triage CLI 호출 타임아웃 (s). 본 호출보다 짧게.
         private int triageTimeoutSec = 15;
+        // TTS로 흘러갈 최대 문장 수. sanitizeOutput()에서 적용.
+        //  > 0  : 해당 문장 수까지만 유지 (예: 2 = 2문장까지)
+        //  ≤ 0  : 무제한. CLI가 뱉은 raw 응답을 그대로 통과시킴(라벨/따옴표 정제는 여전히 수행).
+        // 캐릭터 룰(1~2문장)에 맞추려면 2 권장. raw 그대로 보고 싶으면 0.
+        private int maxSentences = 2;
     }
 
     /**

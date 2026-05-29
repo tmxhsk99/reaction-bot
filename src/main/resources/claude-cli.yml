@@ -33,7 +33,8 @@ reaction-bot:
     # 리액션 봇은 짧은 응답이면 충분하니 Haiku 권장.
     #   claude-haiku-4-5-20251001  ← 가장 빠르고 한도 적게 먹음
     #   claude-sonnet-4-6          ← 더 풍부한 반응
-    model: "claude-sonnet-4-6"
+    #   claude-opus-4-7            ← 가장 풍부/정교한 반응, 구독 한도·레이턴시 가장 크게 소모 (현재 설정값)
+    model: "claude-opus-4-7"
 
     # CLI 응답 최대 대기 시간(초). 콜드 스타트 + 추론 포함.
     # 첫 호출은 느릴 수 있어 여유 둠.
@@ -69,6 +70,12 @@ reaction-bot:
 
     # triage CLI 호출 타임아웃(초). 본 호출보다 짧게.
     triage-timeout-sec: 15
+
+    # TTS로 흘러갈 최대 문장 수. sanitizeOutput()에서 적용.
+    #   > 0  : 해당 문장 수까지만 유지 (예: 2 = 2문장까지)
+    #   ≤ 0  : 무제한. CLI raw 응답을 그대로 통과 (라벨/따옴표 정제는 여전히 수행).
+    # 캐릭터 룰(1~2문장) 지키려면 2, raw 그대로 듣고 싶으면 0.
+    max-sentences: 0
 
     # claude-cli 전용 추가 시스템 지침. character.yml의 system-prompt 뒤에 append.
     # 한국어 강제·이모지 금지·줄 수 제한·라벨 prefix 금지 등 출력 정제 룰.
