@@ -60,8 +60,8 @@ public class ClaudeCliService implements LlmProvider {
     private static final Pattern WRAPPING_QUOTES =
             Pattern.compile("^[\"'“”‘’`]+|[\"'“”‘’`]+$");
 
-    /** TTS로 흘러갈 최대 문장 수. 캐릭터 룰과 일치. */
-    private static final int MAX_SENTENCES = 2;
+    // MAX_SENTENCES 는 properties.getClaudeCli().getMaxSentences() 로 이동
+    // (claude-cli.yml 에서 0 으로 두면 무제한 = raw 그대로 통과).
 
     /** ollama 서비스와 동일 컨셉. 구독 한도 안이라 비용 무관 → 적극성 부스트. */
     private static final String ASSERTIVE_NUDGE = """
@@ -610,7 +610,11 @@ public class ClaudeCliService implements LlmProvider {
             out = next;
         }
         out = WRAPPING_QUOTES.matcher(out).replaceAll("").trim();
-        out = limitSentences(out, MAX_SENTENCES);
+        // 설정값 ≤ 0 이면 문장 수 제한 끔(raw 그대로). > 0 이면 해당 문장 수까지만 유지.
+        int max = properties.getClaudeCli().getMaxSentences();
+        if (max > 0) {
+            out = limitSentences(out, max);
+        }
         return out;
     }
 
