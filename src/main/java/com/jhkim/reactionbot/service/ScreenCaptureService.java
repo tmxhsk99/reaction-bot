@@ -36,20 +36,30 @@ public class ScreenCaptureService {
     private final ObsScreenshotClient obsClient;
 
     /**
-     * 설정된 source에 따라 캡처 → JPEG → Base64 인코딩.
-     * 화면이 단색(검은/흰/로딩)으로 판정되면 null 반환 → 호출 측은 이미지 없이 발화만으로 반응.
+     * 캡처 결과. base64는 정상 캡처일 때만 채워지고, 단색/로딩 화면이면 null + blank=true.
+     * 호출 측은 blank=true일 때 LLM 호출 시 "화면 정보 없음 — 발화 텍스트에만 기반해 반응"
+     * 힌트를 주입해 LLM이 없는 화면을 추측하지 않도록 한다.
      */
-    public String captureBase64Jpeg() {
+    public record Capture(String base64Jpeg, boolean blank) {
+        public static final Capture BLANK = new Capture(null, true);
+        public static Capture ok(String base64) { return new Capture(base64, false); }
+    }
+
+    /**
+     * 설정된 source에 따라 캡처 → JPEG → Base64 인코딩.
+     * 화면이 단색(검은/흰/로딩)으로 판정되면 {@link Capture#BLANK} 반환.
+     */
+    public Capture captureBase64Jpeg() {
         String source = properties.getScreen().getSource();
         if ("obs".equalsIgnoreCase(source)) {
             try {
                 String base64 = obsClient.captureBase64Jpeg();
                 if (isBlankBase64Jpeg(base64)) {
                     log.info("단색/로딩 화면 감지 — 이미지 생략 (OBS)");
-                    return null;
+                    return Capture.BLANK;
                 }
                 log.debug("OBS 캡처 완료. base64 {}자", base64.length());
-                return base64;
+                return Capture.ok(base64);
             } catch (Exception e) {
                 throw new RuntimeException("OBS 캡처 실패: " + e.getMessage(), e);
             }
@@ -58,12 +68,12 @@ public class ScreenCaptureService {
         BufferedImage resized = resizeIfNeeded(image);
         if (isBlank(resized)) {
             log.info("단색/로딩 화면 감지 — 이미지 생략 (Robot)");
-            return null;
+            return Capture.BLANK;
         }
         byte[] jpegBytes = toJpeg(resized);
         log.debug("Robot 캡처 완료. {}x{} → {}바이트",
                 resized.getWidth(), resized.getHeight(), jpegBytes.length);
-        return Base64.getEncoder().encodeToString(jpegBytes);
+        return Capture.ok(Base64.getEncoder().encodeToString(jpegBytes));
     }
 
     /** base64 JPEG를 디코드해 단색 여부 판정. 디코드 실패 시 false(=그대로 전송)로 안전 폴백. */
