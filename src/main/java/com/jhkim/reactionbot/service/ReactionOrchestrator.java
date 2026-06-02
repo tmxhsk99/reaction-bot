@@ -35,6 +35,12 @@ public class ReactionOrchestrator {
     private final AtomicReference<Instant> spokeEndedAt = new AtomicReference<>(Instant.EPOCH);
     private final AtomicReference<Instant> lastUserUtteranceAt = new AtomicReference<>(Instant.now());
 
+    // 화면이 단색/검정/로딩으로 감지될 때 user text 앞에 붙이는 힌트.
+    // 시스템 프롬프트는 "매 호출마다 스크린샷이 함께 온다"고 가정하므로,
+    // 이미지 없이 호출할 때 화면 추측·해설을 막고 발화 텍스트에만 반응하도록 명시.
+    private static final String BLANK_SCREEN_HINT =
+            "[화면 정보 없음 (단색/검정/로딩 화면). 화면 묘사·추측 금지. 발화 텍스트에만 기반해 반응]\n";
+
     public enum Result {
         SPOKE,
         PASS,
@@ -119,9 +125,12 @@ public class ReactionOrchestrator {
             // 9) 코멘트 생성 직전에 화면 캡처 (필요할 때만).
             //    text-only provider는 acceptsImage()=false라 캡처 자체를 건너뜀.
             String base64Image = null;
+            boolean screenBlank = false;
             if (needsVision && llmProvider.acceptsImage()) {
                 try {
-                    base64Image = screenCaptureService.captureBase64Jpeg();
+                    ScreenCaptureService.Capture cap = screenCaptureService.captureBase64Jpeg();
+                    base64Image = cap.base64Jpeg();
+                    screenBlank = cap.blank();
                 } catch (Exception e) {
                     log.warn("화면 캡처 실패. 이미지 없이 진행.", e);
                 }
@@ -129,8 +138,10 @@ public class ReactionOrchestrator {
                 log.debug("vision 생략 (mode={}, triage 판단)", mmMode);
             }
 
-            // 10) 실제 코멘트 생성
-            String botText = llmProvider.generateComment(text, base64Image);
+            // 10) 실제 코멘트 생성. 단색 화면이면 텍스트 앞에 힌트를 붙여
+            //     LLM이 화면을 추측·해설하지 않고 발화에만 반응하도록 유도.
+            String effectiveText = screenBlank ? (BLANK_SCREEN_HINT + text) : text;
+            String botText = llmProvider.generateComment(effectiveText, base64Image);
             if (LlmProvider.PASS.equals(botText) || botText == null || botText.isBlank()) {
                 return new ReactionOutcome(Result.PASS, null);
             }
@@ -177,28 +188,42 @@ public class ReactionOrchestrator {
         try {
             // vision provider일 때만 캡처. TOPIC은 화면 의존 비중 크지만 캡처 실패 시 텍스트로라도 시도.
             String base64Image = null;
+            boolean screenBlank = false;
             if (llmProvider.acceptsImage()) {
                 try {
-                    base64Image = screenCaptureService.captureBase64Jpeg();
+                    ScreenCaptureService.Capture cap = screenCaptureService.captureBase64Jpeg();
+                    base64Image = cap.base64Jpeg();
+                    screenBlank = cap.blank();
                 } catch (Exception e) {
                     log.warn("Idle trigger 화면 캡처 실패. 이미지 없이 진행.", e);
                 }
             }
 
+            // 단색 화면이면 TOPIC(화면 의존)을 LIGHT(가벼운 한 마디)로 강등.
+            // 화면 정보 없는 상태에서 "화면 보고 새 화제"는 PASS밖에 안 나옴.
+            BotProperties.IdleTrigger.Stage effectiveStage = stage;
+            if (screenBlank && stage == BotProperties.IdleTrigger.Stage.TOPIC) {
+                log.info("Idle TOPIC인데 단색 화면 — LIGHT로 강등");
+                effectiveStage = BotProperties.IdleTrigger.Stage.LIGHT;
+            }
+
             String idleSystemPrompt;
             String triggerText;
-            if (stage == BotProperties.IdleTrigger.Stage.TOPIC) {
+            if (effectiveStage == BotProperties.IdleTrigger.Stage.TOPIC) {
                 idleSystemPrompt = character.resolveIdleTopicPrompt();
                 triggerText = "(능동 트리거 TOPIC: 한참 더 조용하네. 화면 보고 흥미로운 거 짚어서 새 화제 던져. 별거 없으면 PASS)";
             } else {
                 idleSystemPrompt = character.resolveIdleLightPrompt();
                 triggerText = "(능동 트리거 LIGHT: 한참 조용해. 가볍게 한 마디만. 별거 없으면 PASS)";
             }
+            if (screenBlank) {
+                triggerText = BLANK_SCREEN_HINT + triggerText;
+            }
 
             String botText = llmProvider.generateIdleComment(idleSystemPrompt, triggerText, base64Image);
 
             if (LlmProvider.PASS.equals(botText) || botText == null || botText.isBlank()) {
-                log.info("Idle trigger PASS ({})", stage);
+                log.info("Idle trigger PASS ({})", effectiveStage);
                 return new ReactionOutcome(Result.PASS, null);
             }
 
@@ -208,7 +233,7 @@ public class ReactionOrchestrator {
             } finally {
                 safeAvatarEvent(false);
             }
-            log.info("Idle trigger 발화 ({}): {}", stage, botText);
+            log.info("Idle trigger 발화 ({}): {}", effectiveStage, botText);
             return new ReactionOutcome(Result.SPOKE, botText);
 
         } catch (Exception e) {
