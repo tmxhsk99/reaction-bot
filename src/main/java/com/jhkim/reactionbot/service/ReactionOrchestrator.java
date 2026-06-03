@@ -122,13 +122,17 @@ public class ReactionOrchestrator {
                 needsVision = false;
             }
 
-            // 9) 코멘트 생성 직전에 화면 캡처 (필요할 때만).
+            // 9) 화면 캡처. 발화 시작 시점에 프리캡처한 것이 있으면 우선 사용.
+            //    프리캡처가 없거나 TTL 지났으면 지금 캡처 (폴백).
             //    text-only provider는 acceptsImage()=false라 캡처 자체를 건너뜀.
             String base64Image = null;
             boolean screenBlank = false;
             if (needsVision && llmProvider.acceptsImage()) {
                 try {
-                    ScreenCaptureService.Capture cap = screenCaptureService.captureBase64Jpeg();
+                    ScreenCaptureService.Capture cap = screenCaptureService.consumePreCaptured();
+                    if (cap == null) {
+                        cap = screenCaptureService.captureBase64Jpeg();
+                    }
                     base64Image = cap.base64Jpeg();
                     screenBlank = cap.blank();
                 } catch (Exception e) {

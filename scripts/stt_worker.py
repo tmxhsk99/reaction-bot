@@ -81,10 +81,12 @@ class SpeechDetector:
     """
     def __init__(self, vad_aggressiveness: int = 2,
                  start_voiced_frames: int = 8,    # 240ms 연속 voiced -> 시작
-                 end_silence_frames: int = 25):   # 750ms 연속 silence -> 끝
+                 end_silence_frames: int = 25,    # 750ms 연속 silence -> 끝
+                 on_speech_start=None):            # 발화 시작 시 호출할 콜백
         self.vad = webrtcvad.Vad(vad_aggressiveness)
         self.start_voiced_frames = start_voiced_frames
         self.end_silence_frames = end_silence_frames
+        self.on_speech_start = on_speech_start
 
         self.is_speaking = False
         self.voiced_window = deque(maxlen=start_voiced_frames)
@@ -109,6 +111,8 @@ class SpeechDetector:
                 self.current_utterance = list(self.pre_buffer)
                 self.silence_window.clear()
                 print("🎤 발화 감지", flush=True)
+                if self.on_speech_start:
+                    self.on_speech_start()
             return None
         else:
             self.current_utterance.append(frame_bytes)
@@ -163,6 +167,18 @@ def build_initial_prompt(prompt_file: str, extra_prompt: str) -> str:
         prompt = prompt[:600]
         print("⚠️ initial_prompt 너무 길어 600자로 잘라냄", flush=True)
     return prompt
+
+
+def _pre_capture(server_url: str):
+    """발화 시작 시점에 화면을 미리 캡처해둔다. fire-and-forget."""
+    try:
+        requests.post(f"{server_url}/api/screen/pre-capture", timeout=5)
+    except Exception as e:
+        print(f"⚠️ 프리캡처 실패 (무시): {e}", flush=True)
+
+
+def _pre_capture_async(server_url: str):
+    threading.Thread(target=_pre_capture, args=(server_url,), daemon=True).start()
 
 
 def _post_worker(server_url: str, text: str):
@@ -241,7 +257,10 @@ def main():
     model = WhisperModel(args.model, device=args.device, compute_type=args.compute_type)
     print("✅ 모델 로딩 완료", flush=True)
 
-    detector = SpeechDetector(vad_aggressiveness=args.vad_aggressiveness)
+    detector = SpeechDetector(
+        vad_aggressiveness=args.vad_aggressiveness,
+        on_speech_start=lambda: _pre_capture_async(args.server_url),
+    )
     audio_queue: "queue.Queue[bytes]" = queue.Queue()
 
     def audio_callback(indata, frames, time_info, status):

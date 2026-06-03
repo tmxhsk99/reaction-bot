@@ -3,6 +3,7 @@ package com.jhkim.reactionbot.controller;
 import com.jhkim.reactionbot.dto.SpeechDto;
 import com.jhkim.reactionbot.service.ConversationHistory;
 import com.jhkim.reactionbot.service.ReactionOrchestrator;
+import com.jhkim.reactionbot.service.ScreenCaptureService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -18,6 +19,7 @@ public class SpeechController {
 
     private final ReactionOrchestrator orchestrator;
     private final ConversationHistory history;
+    private final ScreenCaptureService screenCaptureService;
 
     /**
      * 파이썬 STT 워커가 발화 한 덩어리 끝날 때마다 호출.
@@ -31,6 +33,17 @@ public class SpeechController {
                 outcome.result().name(),
                 outcome.botText()
         ));
+    }
+
+    /**
+     * STT 워커가 발화 시작을 감지했을 때 호출.
+     * 유저가 말하기 시작한 시점의 화면을 미리 캡처해두면
+     * LLM이 실제 발화 맥락에 맞는 화면을 참고할 수 있다.
+     */
+    @PostMapping("/screen/pre-capture")
+    public ResponseEntity<Void> preCapture() {
+        screenCaptureService.preCaptureForSpeech();
+        return ResponseEntity.ok().build();
     }
 
     /** 대화 히스토리 초기화 (방송 시작 시) */
