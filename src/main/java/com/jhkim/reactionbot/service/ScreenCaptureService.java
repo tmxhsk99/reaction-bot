@@ -10,7 +10,9 @@ import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.time.Instant;
 import java.util.Base64;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 화면 캡처. source 설정에 따라 분기:
@@ -31,6 +33,12 @@ public class ScreenCaptureService {
     // 픽셀 휘도(0~255)의 stddev가 이 값보다 낮으면 "내용 없는 화면"으로 보고 이미지를 LLM에 안 보냄.
     // 순수 검정/흰색/단색 로딩은 stddev≈0, 실제 게임 장면은 보통 30↑이라 안전하게 걸러짐.
     private static final double BLANK_LUMA_STDDEV = 8.0;
+
+    // 발화 시작 시점에 미리 캡처해둔 스크린샷. 발화 종료 후 LLM 호출 시 이 캐시를 우선 사용.
+    private static final long PRE_CAPTURE_TTL_MS = 30_000;
+    private final AtomicReference<PreCapture> preCaptured = new AtomicReference<>();
+
+    private record PreCapture(Capture capture, Instant capturedAt) {}
 
     private final BotProperties properties;
     private final ObsScreenshotClient obsClient;
@@ -74,6 +82,37 @@ public class ScreenCaptureService {
         log.debug("Robot 캡처 완료. {}x{} → {}바이트",
                 resized.getWidth(), resized.getHeight(), jpegBytes.length);
         return Capture.ok(Base64.getEncoder().encodeToString(jpegBytes));
+    }
+
+    /**
+     * 발화 시작 시점에 호출. 스크린샷을 미리 캡처해서 캐시.
+     * 유저가 "이거 봐" 하며 가리킨 화면을 LLM이 실제로 보게 하려면
+     * 발화 시작 시점의 화면이 가장 정확하다.
+     */
+    public void preCaptureForSpeech() {
+        try {
+            Capture cap = captureBase64Jpeg();
+            preCaptured.set(new PreCapture(cap, Instant.now()));
+            log.info("프리캡처 완료 (blank={})", cap.blank());
+        } catch (Exception e) {
+            log.warn("프리캡처 실패: {}", e.getMessage());
+            preCaptured.set(null);
+        }
+    }
+
+    /**
+     * 프리캡처된 스크린샷을 꺼냄 (1회 소비). TTL 초과 시 null 반환.
+     */
+    public Capture consumePreCaptured() {
+        PreCapture pc = preCaptured.getAndSet(null);
+        if (pc == null) return null;
+        long ageMs = java.time.Duration.between(pc.capturedAt(), Instant.now()).toMillis();
+        if (ageMs > PRE_CAPTURE_TTL_MS) {
+            log.debug("프리캡처 TTL 초과 ({}ms). 폐기.", ageMs);
+            return null;
+        }
+        log.debug("프리캡처 사용 (age={}ms)", ageMs);
+        return pc.capture();
     }
 
     /** base64 JPEG를 디코드해 단색 여부 판정. 디코드 실패 시 false(=그대로 전송)로 안전 폴백. */
