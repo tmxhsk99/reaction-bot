@@ -55,7 +55,13 @@ public class UserConfigService {
             "reaction-bot.idle-trigger.enabled",
             "reaction-bot.speech.respond-only-when-addressed",
             "reaction-bot.stt.auto-start",
-            "reaction-bot.pokemon.enabled"
+            "reaction-bot.pokemon.enabled",
+            "reaction-bot.pokemon.overlay.enabled",
+            "reaction-bot.pokemon.overlay.generation",
+            "reaction-bot.pokemon.overlay.mode",
+            "reaction-bot.pokemon.overlay.refresh-interval-ms",
+            "reaction-bot.pokemon.overlay.max-pokemon",
+            "reaction-bot.pokemon.overlay.infer-moves"
     );
 
     // 빈 문자열로의 변경을 허용하는 키. (기본 정책은 빈 값=변경 안 함 이지만 텍스트영역/경로는 지워서 자동 탐색 복귀 가능해야 함)
@@ -106,6 +112,12 @@ public class UserConfigService {
         out.put("reaction-bot.speech.respond-only-when-addressed", properties.getSpeech().isRespondOnlyWhenAddressed());
         out.put("reaction-bot.stt.auto-start", properties.getStt().isAutoStart());
         out.put("reaction-bot.pokemon.enabled", properties.getPokemon().isEnabled());
+        out.put("reaction-bot.pokemon.overlay.enabled", properties.getPokemon().getOverlay().isEnabled());
+        out.put("reaction-bot.pokemon.overlay.generation", properties.getPokemon().getOverlay().getGeneration());
+        out.put("reaction-bot.pokemon.overlay.mode", safe(properties.getPokemon().getOverlay().getMode()));
+        out.put("reaction-bot.pokemon.overlay.refresh-interval-ms", properties.getPokemon().getOverlay().getRefreshIntervalMs());
+        out.put("reaction-bot.pokemon.overlay.max-pokemon", properties.getPokemon().getOverlay().getMaxPokemon());
+        out.put("reaction-bot.pokemon.overlay.infer-moves", properties.getPokemon().getOverlay().isInferMoves());
         return out;
     }
 

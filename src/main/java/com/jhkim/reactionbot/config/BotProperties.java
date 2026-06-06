@@ -296,5 +296,36 @@ public class BotProperties {
         private boolean enabled;
         private String pokeapiBase;         // PokeAPI 베이스 URL
         private int cacheTtlSec;
+        private Overlay overlay = new Overlay();
+    }
+
+    /**
+     * 스크린샷에서 포켓몬을 인식해 /pokemon-overlay HTML 화면에 띄우는 add-on.
+     * 발화 흐름과 분리된 별개 기능. enabled=false 면 비활성(스케줄러/엔드포인트도 no-op).
+     *
+     * 트리거 모드:
+     *   - auto              : refresh-interval-ms 주기로 자동 분석 (방송 중 켜놓기)
+     *   - manual            : /pokemon-overlay 우측 분석 버튼으로만 트리거
+     *   - speech-precapture : 발화 프리캡처 시점에 함께 분석 (발화 있을 때만 갱신)
+     *
+     * 세대(generation): 1~9. PokéAPI past_values를 활용해 해당 세대 시점의 종족값/타입을 표시.
+     * max-pokemon: 한 화면에 보여줄 카드 수 상한 (2=싱글배틀, 4=더블배틀).
+     */
+    @Getter @Setter
+    public static class Overlay {
+        private boolean enabled = false;
+        // 1~9 (9세대까지). 이후 세대 추가될 경우 그대로 정수 입력 허용.
+        private int generation = 9;
+        // "auto" | "manual" | "speech-precapture"
+        private String mode = "manual";
+        // auto 모드일 때 폴링 주기. 너무 짧으면 LLM 비용 폭증.
+        private int refreshIntervalMs = 10000;
+        // 보여줄 포켓몬 카드 최대 개수 (2 / 4).
+        private int maxPokemon = 2;
+        // 기술 배치 추측 표시 여부. true면 LLM에게 4개 기술 추측까지 요청. 응답 길어지고 느려짐.
+        private boolean inferMoves = false;
+        // 화면 전체에서 포켓몬 영역만 잘라보고 싶을 때 사용. 빈 값이면 전체 캡처 그대로 사용.
+        // "x,y,w,h" 정규화 좌표(0~1). 예: "0,0.6,1,0.4" (하단 40% 사용).
+        private String cropRegion = "";
     }
 }

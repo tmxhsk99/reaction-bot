@@ -24,6 +24,8 @@ public class WebConfig implements WebMvcConfigurer {
         registry.addViewController("/avatar/").setViewName("forward:/avatar/index.html");
         registry.addViewController("/config").setViewName("forward:/config/index.html");
         registry.addViewController("/config/").setViewName("forward:/config/index.html");
+        registry.addViewController("/pokemon-overlay").setViewName("forward:/pokemon-overlay/index.html");
+        registry.addViewController("/pokemon-overlay/").setViewName("forward:/pokemon-overlay/index.html");
     }
 
     @Override

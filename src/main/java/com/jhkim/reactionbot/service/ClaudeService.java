@@ -237,6 +237,31 @@ public class ClaudeService implements LlmProvider {
         return raw;
     }
 
+    /**
+     * 페르소나·히스토리 거치지 않는 raw vision 호출 (포켓몬 오버레이 등 부가 기능용).
+     * 히스토리에 영향 없음. triage·pokemon 컨텍스트·passCounter nudge 모두 미적용.
+     * triageModel(저렴) 우선, 비어있으면 main model 사용.
+     */
+    @Override
+    public String analyzeImage(String systemPrompt, String userPrompt, String base64JpegImage) {
+        String model = properties.getAnthropic().getTriageModel();
+        if (model == null || model.isBlank()) {
+            model = properties.getAnthropic().getModel();
+        }
+        List<MessageParam> messages = new ArrayList<>();
+        messages.add(buildLastUserMessage(userPrompt, base64JpegImage));
+
+        MessageCreateParams params = MessageCreateParams.builder()
+                .model(model)
+                .maxTokens(1024L)
+                .system(systemPrompt)
+                .messages(messages)
+                .build();
+        log.debug("analyzeImage 호출 (model={}, image={})", model, base64JpegImage != null);
+        Message response = client.messages().create(params);
+        return extractText(response).trim();
+    }
+
     private String extractText(Message response) {
         return response.content().stream()
                 .map(block -> block.text().map(t -> t.text()).orElse(""))
