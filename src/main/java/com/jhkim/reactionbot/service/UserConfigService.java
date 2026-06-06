@@ -38,23 +38,42 @@ public class UserConfigService {
             "reaction-bot.llm.provider",
             "reaction-bot.anthropic.api-key",
             "reaction-bot.gemini.api-key",
-            "reaction-bot.tts.provider",
+            "reaction-bot.openai.api-key",
+            "reaction-bot.claude-cli.executable",
+            "reaction-bot.claude-cli.executable-search-dir",
+            "reaction-bot.codex-cli.executable",
+            "reaction-bot.codex-cli.api-key",
             "reaction-bot.tts.voice",
-            "reaction-bot.tts.azure.key",
-            "reaction-bot.tts.azure.region",
             "reaction-bot.character.name",
             "reaction-bot.character.streamer-name",
+            "reaction-bot.character.use-custom-prompt",
+            "reaction-bot.character.custom-identity",
+            "reaction-bot.character.custom-personality",
+            "reaction-bot.character.custom-rules",
             "reaction-bot.screen.source",
             "reaction-bot.screen.obs.password",
             "reaction-bot.idle-trigger.enabled",
-            "reaction-bot.stt.auto-start"
+            "reaction-bot.speech.respond-only-when-addressed",
+            "reaction-bot.stt.auto-start",
+            "reaction-bot.pokemon.enabled"
+    );
+
+    // 빈 문자열로의 변경을 허용하는 키. (기본 정책은 빈 값=변경 안 함 이지만 텍스트영역/경로는 지워서 자동 탐색 복귀 가능해야 함)
+    private static final List<String> ALLOW_EMPTY_KEYS = List.of(
+            "reaction-bot.character.custom-identity",
+            "reaction-bot.character.custom-personality",
+            "reaction-bot.character.custom-rules",
+            "reaction-bot.claude-cli.executable",
+            "reaction-bot.claude-cli.executable-search-dir",
+            "reaction-bot.codex-cli.executable"
     );
 
     // 마스킹할 시크릿 키
     private static final List<String> SECRET_KEYS = List.of(
             "reaction-bot.anthropic.api-key",
             "reaction-bot.gemini.api-key",
-            "reaction-bot.tts.azure.key",
+            "reaction-bot.openai.api-key",
+            "reaction-bot.codex-cli.api-key",
             "reaction-bot.screen.obs.password"
     );
 
@@ -69,16 +88,24 @@ public class UserConfigService {
         out.put("reaction-bot.llm.provider", safe(properties.getLlm().getProvider()));
         out.put("reaction-bot.anthropic.api-key", maskSecret(safe(properties.getAnthropic().getApiKey())));
         out.put("reaction-bot.gemini.api-key", maskSecret(safe(properties.getGemini().getApiKey())));
-        out.put("reaction-bot.tts.provider", safe(properties.getTts().getProvider()));
+        out.put("reaction-bot.openai.api-key", maskSecret(safe(properties.getOpenai().getApiKey())));
+        out.put("reaction-bot.claude-cli.executable", safe(properties.getClaudeCli().getExecutable()));
+        out.put("reaction-bot.claude-cli.executable-search-dir", safe(properties.getClaudeCli().getExecutableSearchDir()));
+        out.put("reaction-bot.codex-cli.executable", safe(properties.getCodexCli().getExecutable()));
+        out.put("reaction-bot.codex-cli.api-key", maskSecret(safe(properties.getCodexCli().getApiKey())));
         out.put("reaction-bot.tts.voice", safe(properties.getTts().getVoice()));
-        out.put("reaction-bot.tts.azure.key", maskSecret(safe(properties.getTts().getAzure().getKey())));
-        out.put("reaction-bot.tts.azure.region", safe(properties.getTts().getAzure().getRegion()));
         out.put("reaction-bot.character.name", safe(properties.getCharacter().getName()));
         out.put("reaction-bot.character.streamer-name", safe(properties.getCharacter().getStreamerName()));
+        out.put("reaction-bot.character.use-custom-prompt", properties.getCharacter().isUseCustomPrompt());
+        out.put("reaction-bot.character.custom-identity", safe(properties.getCharacter().getCustomIdentity()));
+        out.put("reaction-bot.character.custom-personality", safe(properties.getCharacter().getCustomPersonality()));
+        out.put("reaction-bot.character.custom-rules", safe(properties.getCharacter().getCustomRules()));
         out.put("reaction-bot.screen.source", safe(properties.getScreen().getSource()));
         out.put("reaction-bot.screen.obs.password", maskSecret(safe(properties.getScreen().getObs().getPassword())));
         out.put("reaction-bot.idle-trigger.enabled", properties.getIdleTrigger().isEnabled());
+        out.put("reaction-bot.speech.respond-only-when-addressed", properties.getSpeech().isRespondOnlyWhenAddressed());
         out.put("reaction-bot.stt.auto-start", properties.getStt().isAutoStart());
+        out.put("reaction-bot.pokemon.enabled", properties.getPokemon().isEnabled());
         return out;
     }
 
@@ -92,8 +119,12 @@ public class UserConfigService {
             Object value = e.getValue();
             if (!EDITABLE_KEYS.contains(key)) continue;
             if (value == null) continue;
-            // 마스킹된 그대로 들어온 경우 → 변경 의도 아님
-            if (value instanceof String s && (s.isEmpty() || s.matches("^\\*{2,}.*"))) continue;
+            if (value instanceof String s) {
+                // 마스킹된 그대로 들어온 경우 → 변경 의도 아님
+                if (s.matches("^\\*{2,}.*")) continue;
+                // 일반 키는 빈 값=변경 안 함. ALLOW_EMPTY_KEYS만 빈 값 저장 허용(텍스트영역 지우기).
+                if (s.isEmpty() && !ALLOW_EMPTY_KEYS.contains(key)) continue;
+            }
             setNested(existing, key, value);
         }
         saveYaml(file, existing);

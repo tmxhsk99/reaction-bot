@@ -15,9 +15,14 @@ spring:
 reaction-bot:
   # 캐릭터 이름 / 스트리머 이름 (환경변수로 덮어쓰기 가능)
   # BOT_NAME, STREAMER_NAME 환경변수 설정 시 그 값을 우선 사용
+  # use-custom-prompt=true 면 아래 custom-* 3종으로 character.yml 본문을 대체. /config UI에서 편집 권장.
   character:
     name: ${BOT_NAME:리봇}
     streamer-name: ${STREAMER_NAME:로크만}
+    use-custom-prompt: false
+    custom-identity: ""
+    custom-personality: ""
+    custom-rules: ""
 
   # LLM provider 선택 — 각 provider별 디테일은 anthropic.yml / gemini.yml / openai.yml / ollama.yml / claude-cli.yml / codex-cli.yml 참조.
   # "anthropic"  = Claude API (Haiku triage + Sonnet 생성). 토큰 단가 결제.
@@ -42,26 +47,17 @@ reaction-bot:
   history:
     max-turns: 4                    # 최근 N턴 (user+assistant 각각). 로컬 Ollama VL은 KV-cache 부담 → 짧게 유지
 
-  # TTS
-  # provider:
-  #   "azure" - Azure Speech REST API. 한국어 음성 다양, 무료 tier 월 50K자. AZURE_SPEECH_KEY 필요.
-  #            가용 음성:
-  #              여: JiMin(차분), SunHi(밝음), YuJin(발랄), SeoHyeon, SoonBok
-  #              남: InJoon, BongJin(중후), GookMin(친근), Hyunsu, HyunsuMultilingual
-  #   "edge"  - Microsoft Edge 무료 TTS. 키 불필요. 한국어는 현재 3개만 살아있음.
-  #            가용 음성: ko-KR-SunHiNeural(여), ko-KR-InJoonNeural(남), ko-KR-HyunsuMultilingualNeural(남)
+  # TTS — Microsoft Edge 무료 TTS만 지원. 키 불필요.
+  # 가용 한국어 음성: ko-KR-SunHiNeural(여), ko-KR-InJoonNeural(남), ko-KR-HyunsuMultilingualNeural(남)
   tts:
-    provider: "edge"                 # "azure" 또는 "edge"
+    provider: "edge"
     python-executable: "python"
-    voice: "ko-KR-SunHiNeural"        # provider에 맞는 음성으로 지정
+    voice: "ko-KR-SunHiNeural"
     rate: "+10%"
     pitch: "+5Hz"
     output-dir: "tts-output"
     cleanup-on-startup: true              # 서버 기동 시 tts-output/tts-*.mp3 잔재 일괄 삭제 (강제 종료된 경우 청소)
     cleanup-on-shutdown: true             # 서버 종료 시 tts-output/tts-*.mp3 일괄 삭제
-    azure:
-      key: ${AZURE_SPEECH_KEY:}       # provider=azure일 때만 필요. 환경변수로 주입
-      region: ${AZURE_SPEECH_REGION:koreacentral}
 
   # STT 워커 (마이크 -> Whisper -> 서버 POST)
   # 서버 기동 시 자식 프로세스로 같이 띄움
