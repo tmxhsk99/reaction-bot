@@ -435,6 +435,51 @@ public class ClaudeCliService implements LlmProvider {
         return sanitized;
     }
 
+    /**
+     * 페르소나·히스토리 거치지 않는 raw vision 호출 (포켓몬 오버레이 등 부가 기능용).
+     * triageModel 우선, 비어있으면 main model. allowedTools="Read"로 임시 이미지 읽기만 허용.
+     * 응답은 그대로 반환 (sanitize·문장수 제한 없음 — JSON 구조 깨질 우려).
+     */
+    @Override
+    public String analyzeImage(String systemPrompt, String userPrompt, String base64JpegImage) {
+        BotProperties.ClaudeCli cfg = properties.getClaudeCli();
+        String model = isBlank(cfg.getTriageModel()) ? cfg.getModel() : cfg.getTriageModel();
+
+        Path imagePath = null;
+        if (base64JpegImage != null && !base64JpegImage.isBlank()) {
+            try {
+                imagePath = writeTempImage(base64JpegImage, cfg.getTempImageDir());
+            } catch (Exception e) {
+                log.warn("analyzeImage 임시 스크린샷 저장 실패. 이미지 없이 진행: {}", e.getMessage());
+            }
+        }
+
+        StringBuilder sb = new StringBuilder();
+        if (imagePath != null) {
+            sb.append("[분석 대상 스크린샷]\n")
+              .append(imagePath.toAbsolutePath())
+              .append("\n위 경로의 이미지를 Read 도구로 한 번만 확인하고 아래 지시에 따라 응답하라.\n\n");
+        }
+        sb.append(userPrompt);
+        String composedUserPrompt = sb.toString();
+
+        try {
+            // 본 호출과 동일한 timeout 사용. JSON 추출이 느릴 수 있어 triageTimeout보단 본 timeout이 안전.
+            return callCliCustom(cfg, systemPrompt, composedUserPrompt, model, "Read", cfg.getTimeoutSec());
+        } catch (Exception e) {
+            log.warn("analyzeImage CLI 호출 실패: {}", e.getMessage());
+            throw new RuntimeException("analyzeImage 실패: " + e.getMessage(), e);
+        } finally {
+            if (imagePath != null) {
+                try {
+                    Files.deleteIfExists(imagePath);
+                } catch (IOException io) {
+                    log.warn("analyzeImage 임시 스크린샷 삭제 실패 ({}): {}", imagePath, io.getMessage());
+                }
+            }
+        }
+    }
+
     // ---------- 프롬프트 합성 ----------
 
     private String buildSystemPrompt(BotProperties.ClaudeCli cfg, String input) {

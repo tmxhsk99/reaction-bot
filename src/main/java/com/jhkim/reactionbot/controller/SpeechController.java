@@ -1,7 +1,9 @@
 package com.jhkim.reactionbot.controller;
 
+import com.jhkim.reactionbot.config.BotProperties;
 import com.jhkim.reactionbot.dto.SpeechDto;
 import com.jhkim.reactionbot.service.ConversationHistory;
+import com.jhkim.reactionbot.service.PokemonOverlayService;
 import com.jhkim.reactionbot.service.ReactionOrchestrator;
 import com.jhkim.reactionbot.service.ScreenCaptureService;
 import lombok.RequiredArgsConstructor;
@@ -10,6 +12,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 @Slf4j
 @RestController
@@ -20,6 +23,8 @@ public class SpeechController {
     private final ReactionOrchestrator orchestrator;
     private final ConversationHistory history;
     private final ScreenCaptureService screenCaptureService;
+    private final PokemonOverlayService pokemonOverlayService;
+    private final BotProperties properties;
 
     /**
      * 파이썬 STT 워커가 발화 한 덩어리 끝날 때마다 호출.
@@ -43,6 +48,16 @@ public class SpeechController {
     @PostMapping("/screen/pre-capture")
     public ResponseEntity<Void> preCapture() {
         screenCaptureService.preCaptureForSpeech();
+        // overlay.mode=speech-precapture 면 발화 시점에 함께 분석. 응답 지연 안 주려고 비동기.
+        BotProperties.Overlay ov = properties.getPokemon().getOverlay();
+        if (properties.getPokemon().isEnabled()
+                && ov.isEnabled()
+                && "speech-precapture".equalsIgnoreCase(ov.getMode())) {
+            CompletableFuture.runAsync(() -> {
+                try { pokemonOverlayService.analyze(false); }
+                catch (Exception e) { log.debug("speech-precapture overlay 분석 실패: {}", e.getMessage()); }
+            });
+        }
         return ResponseEntity.ok().build();
     }
 

@@ -142,6 +142,18 @@ reaction-bot:
     pokeapi-base: "https://pokeapi.co/api/v2"
     cache-ttl-sec: 86400
 
+    # 포켓몬 오버레이 (발화와 별개) - 스크린샷에서 포켓몬을 인식해 /pokemon-overlay HTML에 카드로 표시.
+    # 켜두면 화면 안의 포켓몬(싱글 2, 더블 4)을 도트/한글명/세대 기준 종족값과 함께 보여줌.
+    # OBS 브라우저 소스에 띄워두는 용도. provider는 reaction-bot.llm.provider 그대로 재사용.
+    overlay:
+      enabled: false
+      generation: 9                # 1~9. 해당 세대 시점 종족값/타입 데이터 기준
+      mode: "manual"               # "auto" | "manual" | "speech-precapture"
+      refresh-interval-ms: 10000   # auto 모드 폴링 주기. 너무 짧으면 LLM 호출 폭증
+      max-pokemon: 2               # 카드 최대 개수. 2=싱글배틀, 4=더블배틀
+      infer-moves: false           # true면 LLM에게 기술 4개 추측까지 요청. 응답 더 느려짐
+      crop-region: ""              # "x,y,w,h" 0~1 정규화 좌표. 빈 값=전체. 예: "0,0.6,1,0.4"
+
 logging:
   level:
     com.jhkim.reactionbot: DEBUG

@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Reaction Bot — Pokémon Overlay</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo",
+                 "Noto Sans KR", "Malgun Gothic", sans-serif;
+    margin: 0;
+    padding: 12px;
+    background: transparent;        /* OBS 브라우저 소스에서 투명 합성용 */
+    color: #f5f7fa;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.85);
+  }
+
+  .root { display: flex; gap: 12px; align-items: flex-start; }
+  .root.split > .left { flex: 0 0 220px; }
+  .root.split > .right { flex: 0 0 200px; display: flex; align-items: flex-start; justify-content: center; padding-top: 4px; }
+
+  .gen-banner {
+    background: rgba(8,12,18,0.78);
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .gen-banner .label { color: #9aa7b6; font-size: 11px; font-weight: 500; }
+  .gen-banner .gen { color: #58a6ff; font-size: 18px; }
+  .gen-banner .mirror {
+    margin-left: 8px;
+    background: #b3261e;
+    color: #fff;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 99px;
+    text-shadow: none;
+  }
+
+  .cards { display: flex; flex-direction: column; gap: 8px; }
+  .card {
+    display: flex;
+    align-items: stretch;
+    background: rgba(8,12,18,0.82);
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 12px;
+    padding: 10px 12px;
+    min-width: 280px;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.45);
+  }
+  .card .name-col {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 120px;
+    margin-right: 10px;
+  }
+  .card .speed-rank {
+    color: #f0c674;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    margin-bottom: 2px;
+  }
+  .card .name-row { display: flex; align-items: center; gap: 8px; }
+  .card .ko-name { font-size: 18px; font-weight: 700; }
+  .card .sprite {
+    width: 56px; height: 56px;
+    image-rendering: pixelated;
+    background: rgba(255,255,255,0.04);
+    border-radius: 8px;
+  }
+  .card .types { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
+  .card .type {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    text-transform: capitalize;
+    text-shadow: none;
+    background: #555;
+    color: #fff;
+  }
+  .card .stats-col {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 4px 8px;
+    align-items: center;
+    flex: 1;
+  }
+  .card .stat { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .card .stat .lbl { font-size: 10px; color: #9aa7b6; font-weight: 600; }
+  .card .stat .val { font-size: 14px; font-weight: 700; }
+  .card .stat.high .val { color: #56d364; }
+  .card .stat.low .val { color: #d29922; }
+
+  .empty {
+    background: rgba(8,12,18,0.78);
+    border: 1px dashed rgba(255,255,255,0.15);
+    border-radius: 10px;
+    padding: 14px 18px;
+    font-size: 13px;
+    color: #9aa7b6;
+  }
+
+  .analyze-btn {
+    background: #238636;
+    color: white;
+    border: none;
+    padding: 12px 18px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+  }
+  .analyze-btn:hover { background: #2ea043; }
+  .analyze-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .err {
+    color: #f85149;
+    font-size: 11px;
+    margin-top: 4px;
+  }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="root" class="root">
+  <div class="left">
+    <div id="genBanner" class="gen-banner">
+      <span class="label">기준 세대</span>
+      <span class="gen" id="genLabel">—</span>
+      <span class="mirror hidden" id="mirrorTag">미러전</span>
+    </div>
+    <div id="cards" class="cards"></div>
+    <div id="empty" class="empty hidden">화면에서 포켓몬을 감지하지 못했습니다.</div>
+    <div id="err" class="err hidden"></div>
+  </div>
+  <div class="right hidden" id="analyzeBox">
+    <button id="analyzeBtn" class="analyze-btn">분석</button>
+  </div>
+</div>
+
+<script>
+  // 타입별 컬러 (PokéAPI 영문 type name 기준)
+  const TYPE_COLOR = {
+    normal:'#a8a878', fire:'#f08030', water:'#6890f0', electric:'#f8d030',
+    grass:'#78c850', ice:'#98d8d8', fighting:'#c03028', poison:'#a040a0',
+    ground:'#e0c068', flying:'#a890f0', psychic:'#f85888', bug:'#a8b820',
+    rock:'#b8a038', ghost:'#705898', dragon:'#7038f8', dark:'#705848',
+    steel:'#b8b8d0', fairy:'#ee99ac'
+  };
+  // PokéAPI 영문 type name → 한글
+  const TYPE_KO = {
+    normal:'노말', fire:'불꽃', water:'물', electric:'전기',
+    grass:'풀', ice:'얼음', fighting:'격투', poison:'독',
+    ground:'땅', flying:'비행', psychic:'에스퍼', bug:'벌레',
+    rock:'바위', ghost:'고스트', dragon:'드래곤', dark:'악',
+    steel:'강철', fairy:'페어리'
+  };
+  const STAT_LABELS = ['H','A','B','C','D','S'];
+
+  function isHigh(v) { return v >= 110; }
+  function isLow(v)  { return v <= 60; }
+
+  function buildCardEl(card) {
+    const el = document.createElement('div');
+    el.className = 'card';
+
+    const nameCol = document.createElement('div');
+    nameCol.className = 'name-col';
+
+    const rank = document.createElement('div');
+    rank.className = 'speed-rank';
+    rank.textContent = `${ordinal(card.speedRank)} · 스피드 ${card.spe}`;
+    nameCol.appendChild(rank);
+
+    const nameRow = document.createElement('div');
+    nameRow.className = 'name-row';
+    const ko = document.createElement('div');
+    ko.className = 'ko-name';
+    ko.textContent = card.nameKo;
+    nameRow.appendChild(ko);
+    if (card.spriteUrl) {
+      const img = document.createElement('img');
+      img.className = 'sprite';
+      img.src = card.spriteUrl;
+      img.alt = card.nameKo;
+      nameRow.appendChild(img);
+    }
+    nameCol.appendChild(nameRow);
+
+    const types = document.createElement('div');
+    types.className = 'types';
+    (card.types || []).forEach(t => {
+      const span = document.createElement('span');
+      span.className = 'type';
+      span.textContent = TYPE_KO[t] || t;
+      span.style.background = TYPE_COLOR[t] || '#666';
+      types.appendChild(span);
+    });
+    nameCol.appendChild(types);
+    el.appendChild(nameCol);
+
+    const statsCol = document.createElement('div');
+    statsCol.className = 'stats-col';
+    const vals = [card.hp, card.atk, card.def, card.spa, card.spd, card.spe];
+    STAT_LABELS.forEach((label, i) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'stat';
+      if (isHigh(vals[i])) wrap.classList.add('high');
+      if (isLow(vals[i])) wrap.classList.add('low');
+      const lbl = document.createElement('div');
+      lbl.className = 'lbl';
+      lbl.textContent = label;
+      const val = document.createElement('div');
+      val.className = 'val';
+      val.textContent = vals[i];
+      wrap.appendChild(lbl);
+      wrap.appendChild(val);
+      statsCol.appendChild(wrap);
+    });
+    el.appendChild(statsCol);
+
+    return el;
+  }
+
+  function ordinal(n) {
+    if (n === 1) return '1번째 빠름';
+    if (n === 2) return '2번째 빠름';
+    if (n === 3) return '3번째 빠름';
+    if (n === 4) return '4번째 빠름';
+    return `${n}번째`;
+  }
+
+  let lastSig = '';
+
+  function render(state) {
+    const root = document.getElementById('root');
+    root.classList.toggle('split', state.mode === 'manual');
+
+    document.getElementById('genLabel').textContent = `${state.generation}세대`;
+    document.getElementById('mirrorTag').classList.toggle('hidden', !state.mirror);
+    document.getElementById('analyzeBox').classList.toggle('hidden', state.mode !== 'manual');
+
+    const err = document.getElementById('err');
+    if (state.lastError) {
+      err.textContent = state.lastError;
+      err.classList.remove('hidden');
+    } else {
+      err.classList.add('hidden');
+    }
+
+    // 변화 없으면 DOM 재구성 생략 (스프라이트 깜박임 방지)
+    const sig = JSON.stringify({
+      mode: state.mode, gen: state.generation, mirror: state.mirror,
+      cards: (state.cards || []).map(c => [c.slug, c.speedRank, c.hp, c.atk, c.def, c.spa, c.spd, c.spe])
+    });
+    if (sig === lastSig) return;
+    lastSig = sig;
+
+    const cardsEl = document.getElementById('cards');
+    cardsEl.innerHTML = '';
+    const empty = document.getElementById('empty');
+    if (!state.cards || state.cards.length === 0) {
+      empty.classList.remove('hidden');
+    } else {
+      empty.classList.add('hidden');
+      state.cards.forEach(c => cardsEl.appendChild(buildCardEl(c)));
+    }
+  }
+
+  async function fetchState() {
+    try {
+      const r = await fetch('/api/pokemon-overlay/state', { cache: 'no-store' });
+      if (!r.ok) return;
+      render(await r.json());
+    } catch (e) { /* 잠깐 끊김 무시 */ }
+  }
+
+  document.getElementById('analyzeBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('analyzeBtn');
+    btn.disabled = true;
+    btn.textContent = '분석 중…';
+    try {
+      const r = await fetch('/api/pokemon-overlay/analyze', { method: 'POST' });
+      if (r.ok) render(await r.json());
+    } catch (e) {}
+    finally {
+      btn.disabled = false;
+      btn.textContent = '분석';
+    }
+  });
+
+  // 폴링: 상태 변화는 서버가 가지고 있으니 클라이언트는 단순 폴링이면 충분.
+  fetchState();
+  setInterval(fetchState, 1500);
+</script>
+</body>
+</html>

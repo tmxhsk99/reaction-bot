@@ -61,4 +61,17 @@ public interface LlmProvider {
      * - false: orchestrator가 화면 캡처 자체를 생략 (text-only 로컬 모델용. 속도↑)
      */
     default boolean acceptsImage() { return true; }
+
+    /**
+     * 캐릭터 페르소나·히스토리·트리아지 다 무시하고 단발 vision 호출.
+     * 포켓몬 오버레이처럼 발화 흐름과 무관한 raw 분석용. 호출자가 준 systemPrompt만 사용.
+     *
+     * 기본 구현은 미지원 — provider별로 필요 시 override. 미지원 provider 사용 시 호출자가
+     * UnsupportedOperationException 잡아 "이 provider는 raw vision 미지원" 안내 표시.
+     */
+    default String analyzeImage(String systemPrompt, String userPrompt, String base64JpegImage) {
+        throw new UnsupportedOperationException(
+                "analyzeImage가 이 LLM provider에는 구현되지 않았습니다. "
+              + "Anthropic API 또는 Claude Code CLI provider를 사용해 주세요.");
+    }
 }

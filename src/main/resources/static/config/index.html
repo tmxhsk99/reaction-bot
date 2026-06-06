@@ -296,6 +296,59 @@
         <label for="pokemon-enabled" style="margin:0;">포켓몬 - PokeAPI에서 종족값/타입/특성 받아와 LLM에 주입</label>
       </div>
       <div class="hint">발화에서 포켓몬 이름 감지 시 PokeAPI 호출. 포켓몬 게임이 아니면 끄세요.</div>
+
+      <div class="provider-pane" style="margin-top:14px;">
+        <div class="toggle">
+          <input type="checkbox" id="overlay-enabled" name="reaction-bot.pokemon.overlay.enabled">
+          <label for="overlay-enabled" style="margin:0;">포켓몬 오버레이 — 스크린샷 인식 → <a href="/pokemon-overlay/" target="_blank">/pokemon-overlay</a> HTML 카드 표시</label>
+        </div>
+        <div class="hint">발화와 무관한 부가 기능. OBS 브라우저 소스에 <code>/pokemon-overlay/</code>를 띄워두면 됨. 현재 LLM provider를 그대로 재사용 (anthropic / claude-cli 권장).</div>
+
+        <div id="overlay-fields" class="hidden" style="margin-top:10px;">
+          <div class="row">
+            <div>
+              <label>기준 세대</label>
+              <select name="reaction-bot.pokemon.overlay.generation">
+                <option value="1">1세대</option>
+                <option value="2">2세대</option>
+                <option value="3">3세대</option>
+                <option value="4">4세대</option>
+                <option value="5">5세대</option>
+                <option value="6">6세대</option>
+                <option value="7">7세대</option>
+                <option value="8">8세대</option>
+                <option value="9">9세대</option>
+              </select>
+            </div>
+            <div>
+              <label>표시 카드 수</label>
+              <select name="reaction-bot.pokemon.overlay.max-pokemon">
+                <option value="2">2장 (싱글배틀)</option>
+                <option value="4">4장 (더블배틀)</option>
+              </select>
+            </div>
+          </div>
+
+          <label>트리거 모드</label>
+          <div class="radio-row">
+            <label><input type="radio" name="reaction-bot.pokemon.overlay.mode" value="manual"> manual (분석 버튼)</label>
+            <label><input type="radio" name="reaction-bot.pokemon.overlay.mode" value="auto"> auto (주기 폴링)</label>
+            <label><input type="radio" name="reaction-bot.pokemon.overlay.mode" value="speech-precapture"> 발화 시점</label>
+          </div>
+          <div class="hint"><strong>manual</strong>: 우측 분석 버튼 누를 때만 / <strong>auto</strong>: 아래 주기로 자동 / <strong>speech-precapture</strong>: 발화 직전 함께 분석</div>
+
+          <label>자동 갱신 주기 (ms) <span class="hint" style="margin-left:6px;">auto 모드일 때만 의미</span></label>
+          <input type="text" name="reaction-bot.pokemon.overlay.refresh-interval-ms" placeholder="10000">
+          <div class="hint">너무 짧으면 LLM 호출/토큰 폭증. 10000(10초) 이상 권장.</div>
+
+          <div class="toggle">
+            <input type="checkbox" id="overlay-infer-moves" name="reaction-bot.pokemon.overlay.infer-moves">
+            <label for="overlay-infer-moves" style="margin:0;">예상 기술 4개 추측까지 표시 (LLM 응답 느려짐)</label>
+          </div>
+
+          <div class="restart-note">⚠ 오버레이 설정 변경은 서버 재기동 후 적용됩니다.</div>
+        </div>
+      </div>
     </div>
 
     <button type="submit" id="save-btn">저장</button>
@@ -305,6 +358,7 @@
 
   <div class="links">
     <a href="/avatar/" target="_blank">아바타 미리보기 →</a>
+    <a href="/pokemon-overlay/" target="_blank">포켓몬 오버레이 →</a>
     <a href="/api/status" target="_blank">서버 상태 →</a>
     <a href="https://console.anthropic.com" target="_blank">Anthropic Console</a>
     <a href="https://portal.azure.com" target="_blank">Azure Portal</a>
@@ -363,10 +417,18 @@ function refreshProviderPaneVisibility() {
   const sel = document.getElementById('llm-provider');
   if (!sel) return;
   const cur = sel.value;
-  for (const pane of document.querySelectorAll('.provider-pane')) {
+  for (const pane of document.querySelectorAll('.provider-pane[data-provider]')) {
     if (pane.dataset.provider === cur) pane.classList.remove('hidden');
     else pane.classList.add('hidden');
   }
+}
+
+function refreshOverlayVisibility() {
+  const cb = document.getElementById('overlay-enabled');
+  const wrap = document.getElementById('overlay-fields');
+  if (!cb || !wrap) return;
+  if (cb.checked) wrap.classList.remove('hidden');
+  else wrap.classList.add('hidden');
 }
 
 function updateCharCount(ta) {
@@ -410,6 +472,7 @@ async function load() {
     }
     refreshCustomPromptVisibility();
     refreshProviderPaneVisibility();
+    refreshOverlayVisibility();
     bindCharCounters();
   } catch (e) {
     showStatus('설정 로드 실패: ' + e.message, true);
@@ -423,6 +486,9 @@ document.addEventListener('change', (e) => {
   }
   if (e.target.name === 'reaction-bot.llm.provider') {
     refreshProviderPaneVisibility();
+  }
+  if (e.target.name === 'reaction-bot.pokemon.overlay.enabled') {
+    refreshOverlayVisibility();
   }
 });
 
