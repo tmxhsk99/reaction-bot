@@ -8,9 +8,11 @@
   - Python 패키지:
       pip install --user numpy sounddevice requests faster-whisper webrtcvad-wheels edge-tts
 
-[2] API 키 발급 (무료 tier 있음)
-  - Anthropic        https://console.anthropic.com/settings/keys
-  - Azure Speech     https://portal.azure.com (Speech services 리소스 + Free F0)
+[2] API 키 발급 (provider 선택해서 한 개만 있으면 됨)
+  - Anthropic   https://console.anthropic.com/settings/keys
+  - Gemini      https://aistudio.google.com/apikey
+  - OpenAI      https://platform.openai.com/api-keys
+  - 또는 Claude Code CLI / Codex CLI 로컬 설치 + 로그인 (구독 한도, 토큰 비용 0)
 
 [3] 실행
   - start.bat 더블클릭

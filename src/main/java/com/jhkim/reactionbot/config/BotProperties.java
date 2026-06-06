@@ -31,6 +31,18 @@ public class BotProperties {
     public static class Character {
         private String name;
         private String streamerName;
+        // 개인화 캐릭터 프롬프트 사용 여부. true면 아래 custom-* 필드로 character.yml 본문을 대체.
+        // 기본은 false (classpath:character.yml 그대로 사용).
+        private boolean useCustomPrompt = false;
+        // 사용자가 정의하는 캐릭터 정체성/컨셉. 권장 200~400자.
+        // 예: "도도하고 자신만만한 츤데레. 자기 의견 강하게 말함. 진짜 위급할 땐 챙겨주지만 인정 안 함."
+        private String customIdentity = "";
+        // 사용자가 정의하는 성격/말투. 권장 400~800자.
+        // 예: "반말, 1~2문장. 까칠하게 디스함. 명령조 OK. 자랑·비교 OK. 이모지 금지."
+        private String customPersonality = "";
+        // 사용자가 정의하는 추가 규칙/특수 행동. 권장 0~300자. 비워둬도 됨.
+        // 예: "포켓몬 얘기 나오면 종족값/타입 상성 자연스럽게 활용. 격투 게임은 콤보 칭찬."
+        private String customRules = "";
     }
 
     @Getter @Setter
@@ -204,7 +216,7 @@ public class BotProperties {
 
     @Getter @Setter
     public static class Tts {
-        private String provider;            // "azure" 또는 "edge"
+        private String provider = "edge";   // 현재는 "edge"만 지원
         private String pythonExecutable;
         private String voice;
         private String rate;
@@ -212,13 +224,6 @@ public class BotProperties {
         private String outputDir;
         private boolean cleanupOnStartup;   // true면 서버 기동 시 잔재 mp3 일괄 삭제
         private boolean cleanupOnShutdown;  // true면 서버 종료 시 mp3 일괄 삭제
-        private Azure azure = new Azure();
-    }
-
-    @Getter @Setter
-    public static class Azure {
-        private String key;
-        private String region;
     }
 
     @Getter @Setter

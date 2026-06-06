@@ -51,11 +51,6 @@ if not exist "config.yml" (
     echo reaction-bot:
     echo   anthropic:
     echo     api-key: ""              # https://console.anthropic.com/settings/keys
-    echo   tts:
-    echo     provider: "azure"        # azure 또는 edge
-    echo     azure:
-    echo       key: ""                # https://portal.azure.com Speech 리소스 키
-    echo       region: "koreacentral"
     echo   character:
     echo     name: "리봇"
     echo     streamer-name: "스트리머"

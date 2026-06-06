@@ -25,7 +25,7 @@
   }
   .card h2 { margin: 0 0 16px; font-size: 16px; color: #58a6ff; }
   label { display: block; margin: 12px 0 4px; font-size: 13px; color: #c9d1d9; }
-  input[type="text"], input[type="password"], select {
+  input[type="text"], input[type="password"], select, textarea {
     width: 100%;
     padding: 8px 10px;
     background: #0d1117;
@@ -33,8 +33,40 @@
     border-radius: 6px;
     color: #e6edf3;
     font-size: 14px;
+    font-family: inherit;
   }
-  input:focus, select:focus { outline: none; border-color: #58a6ff; }
+  textarea { resize: vertical; min-height: 90px; line-height: 1.5; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: #58a6ff; }
+  .radio-row { display: flex; gap: 16px; margin: 8px 0 4px; }
+  .radio-row label { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; }
+  .radio-row input { width: auto; }
+  .char-count { color: #6e7681; font-size: 12px; margin-top: 4px; text-align: right; }
+  .char-count .ok { color: #56d364; }
+  .char-count .warn { color: #d29922; }
+  .restart-note {
+    background: #2d2106;
+    border: 1px solid #9e6a03;
+    color: #f0c674;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    margin-top: 12px;
+  }
+  .hidden { display: none; }
+  .provider-pane {
+    margin-top: 14px;
+    padding: 12px 14px;
+    background: #0d1117;
+    border: 1px solid #21262d;
+    border-radius: 6px;
+  }
+  code {
+    background: #0d1117;
+    border: 1px solid #21262d;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 12px;
+  }
   .hint { color: #6e7681; font-size: 12px; margin-top: 4px; }
   .row { display: flex; gap: 12px; }
   .row > div { flex: 1; }
@@ -82,11 +114,82 @@
 
   <form id="form">
     <div class="card">
-      <h2>API 키 <span class="badge">필수</span></h2>
+      <h2>LLM Provider <span class="badge">필수</span></h2>
+      <div class="hint">실제 응답을 생성할 LLM. provider별로 필요한 키/경로가 달라요 — 아래에서 선택하면 해당 섹션만 펼쳐집니다.</div>
 
-      <label>Anthropic API Key</label>
-      <input type="password" name="reaction-bot.anthropic.api-key" placeholder="sk-ant-...">
-      <div class="hint">https://console.anthropic.com/settings/keys 에서 발급. 비워 두면 환경변수 ANTHROPIC_API_KEY 사용.</div>
+      <label>Provider</label>
+      <select name="reaction-bot.llm.provider" id="llm-provider">
+        <option value="anthropic">anthropic — Claude API (토큰 종량)</option>
+        <option value="gemini">gemini — Google Gemini API (저렴)</option>
+        <option value="openai">openai — OpenAI API (토큰 종량)</option>
+        <option value="claude-cli">claude-cli — Claude Code CLI (구독 한도, 토큰 비용 0)</option>
+        <option value="codex-cli">codex-cli — Codex CLI (구독 또는 종량)</option>
+        <option value="ollama">ollama — 로컬 (무료, GPU 권장)</option>
+      </select>
+
+      <!-- ─ anthropic ─ -->
+      <div class="provider-pane" data-provider="anthropic">
+        <label>Anthropic API Key</label>
+        <input type="password" name="reaction-bot.anthropic.api-key" placeholder="sk-ant-...">
+        <div class="hint">발급: <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com/settings/keys</a> · 비워두면 환경변수 <code>ANTHROPIC_API_KEY</code> 사용.</div>
+      </div>
+
+      <!-- ─ gemini ─ -->
+      <div class="provider-pane hidden" data-provider="gemini">
+        <label>Gemini API Key</label>
+        <input type="password" name="reaction-bot.gemini.api-key" placeholder="AIza...">
+        <div class="hint">발급: <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a> · 비워두면 환경변수 <code>GEMINI_API_KEY</code> 사용.</div>
+      </div>
+
+      <!-- ─ openai ─ -->
+      <div class="provider-pane hidden" data-provider="openai">
+        <label>OpenAI API Key</label>
+        <input type="password" name="reaction-bot.openai.api-key" placeholder="sk-...">
+        <div class="hint">발급: <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com/api-keys</a> · 비워두면 환경변수 <code>OPENAI_API_KEY</code> 사용.</div>
+      </div>
+
+      <!-- ─ claude-cli ─ -->
+      <div class="provider-pane hidden" data-provider="claude-cli">
+        <div class="hint" style="margin-bottom:8px;">
+          <strong>자동 탐색 동작:</strong> Windows 기본 위치
+          <code>%APPDATA%\Claude\claude-code\&lt;버전&gt;\claude.exe</code>
+          에서 가장 높은 버전을 자동 선택. PATH에 <code>claude</code>가 있어도 동작.
+          자동 탐색이 안 맞으면 아래에 수동 경로 지정.
+        </div>
+
+        <label>실행 파일 경로 <span class="hint" style="margin-left:6px;">선택</span></label>
+        <input type="text" name="reaction-bot.claude-cli.executable" placeholder="claude  또는  C:\Users\me\AppData\Local\Programs\claude\claude.exe">
+        <div class="hint">빈 값 = 기본값 <code>claude</code>(PATH 탐색) 사용. 자동 탐색이 성공하면 이 값은 무시됨.</div>
+
+        <label>버전 폴더 자동 탐색 디렉토리 <span class="hint" style="margin-left:6px;">선택</span></label>
+        <input type="text" name="reaction-bot.claude-cli.executable-search-dir" placeholder="비워두면 OS 기본 (%APPDATA%\Claude\claude-code)">
+        <div class="hint">npm 글로벌 설치 등 비표준 위치면 여기에 디렉토리를, 그리고 위 실행 파일 경로에 절대경로를 직접 적기. 사전 <code>claude</code> 로그인 필수.</div>
+      </div>
+
+      <!-- ─ codex-cli ─ -->
+      <div class="provider-pane hidden" data-provider="codex-cli">
+        <div class="hint" style="margin-bottom:8px;">
+          <strong>자동 탐색 동작:</strong> PATH에 등록된 <code>codex</code> 실행파일 사용.
+          PATH에 없으면 아래에 절대 경로 직접 입력. 인증은 <code>codex login</code>(구독, 토큰 0)
+          또는 아래 API 키(종량) 둘 중 하나.
+        </div>
+
+        <label>실행 파일 경로 <span class="hint" style="margin-left:6px;">선택</span></label>
+        <input type="text" name="reaction-bot.codex-cli.executable" placeholder="codex  또는  C:\Users\me\AppData\Roaming\npm\codex.cmd">
+        <div class="hint">빈 값 = <code>codex</code> (PATH 탐색). 환경변수 <code>CODEX_CLI_EXEC</code>로도 덮어쓰기 가능.</div>
+
+        <label>API Key <span class="hint" style="margin-left:6px;">선택 (구독 사용 시 불필요)</span></label>
+        <input type="password" name="reaction-bot.codex-cli.api-key" placeholder="sk-...">
+        <div class="hint">설정 시 <code>CODEX_API_KEY</code>로 전달 (종량 과금). 비워두면 <code>codex login</code>의 저장된 구독 인증 사용.</div>
+      </div>
+
+      <!-- ─ ollama ─ -->
+      <div class="provider-pane hidden" data-provider="ollama">
+        <div class="hint">
+          로컬 Ollama 서버. <code>ollama pull qwen3-vl:8b</code> 후 사용. 서버는 <code>http://localhost:11434</code> 기본.
+          상세 옵션은 <code>src/main/resources/ollama.yml</code> 직접 편집.
+        </div>
+      </div>
     </div>
 
     <div class="card">
@@ -105,39 +208,50 @@
     </div>
 
     <div class="card">
-      <h2>TTS (음성 합성)</h2>
-
-      <label>Provider</label>
-      <select name="reaction-bot.tts.provider">
-        <option value="azure">azure — 한국어 음성 10개 (Azure 키 필요)</option>
-        <option value="edge">edge — 무료, 한국어 3개</option>
-      </select>
-
-      <label>Voice (provider에 맞는 이름)</label>
-      <input type="text" name="reaction-bot.tts.voice" list="voice-options">
-      <datalist id="voice-options">
-        <option value="ko-KR-JiMinNeural">
-        <option value="ko-KR-SunHiNeural">
-        <option value="ko-KR-YuJinNeural">
-        <option value="ko-KR-SeoHyeonNeural">
-        <option value="ko-KR-SoonBokNeural">
-        <option value="ko-KR-InJoonNeural">
-        <option value="ko-KR-BongJinNeural">
-        <option value="ko-KR-GookMinNeural">
-        <option value="ko-KR-HyunsuNeural">
-        <option value="ko-KR-HyunsuMultilingualNeural">
-      </datalist>
-
-      <div class="row">
-        <div>
-          <label>Azure Speech Key (provider=azure일 때 필요)</label>
-          <input type="password" name="reaction-bot.tts.azure.key">
-        </div>
-        <div>
-          <label>Azure Region</label>
-          <input type="text" name="reaction-bot.tts.azure.region" placeholder="koreacentral">
-        </div>
+      <h2>개인화 - 캐릭터 프롬프트 <span class="badge">선택</span></h2>
+      <div class="hint">
+        AI가 따라할 캐릭터 성격을 직접 정의. 응답 형식·PASS 조건 같은 안전 규칙은 자동으로 포함됨.
       </div>
+
+      <label>캐릭터 프롬프트 적용</label>
+      <div class="radio-row">
+        <label><input type="radio" name="reaction-bot.character.use-custom-prompt" value="false" checked> 적용하지 않음 (기본 캐릭터)</label>
+        <label><input type="radio" name="reaction-bot.character.use-custom-prompt" value="true"> 적용</label>
+      </div>
+
+      <div id="custom-prompt-fields" class="hidden">
+        <label>① 정체성 / 컨셉 <span class="hint" style="margin-left:6px;">필수</span></label>
+        <textarea name="reaction-bot.character.custom-identity"
+                  data-rec-min="80" data-rec-max="400"
+                  placeholder="예) 도도하고 자신만만한 츤데레. 같이 게임하는 친구. 자기 의견 강하게 어필하지만 진짜 위급할 땐 챙겨줌(인정은 안 함)."></textarea>
+        <div class="char-count" data-for="reaction-bot.character.custom-identity">0자 · 권장 80~400자</div>
+
+        <label>② 성격 / 말투 <span class="hint" style="margin-left:6px;">선택</span></label>
+        <textarea name="reaction-bot.character.custom-personality"
+                  data-rec-min="200" data-rec-max="800"
+                  placeholder="예) 반말, 1~2문장. 까칠하게 디스. 명령조 OK. 자랑·비교 OK. 실패하면 사정없이 놀리고, 성공하면 자기 공으로. 추임새 남발 금지."></textarea>
+        <div class="char-count" data-for="reaction-bot.character.custom-personality">0자 · 권장 200~800자</div>
+
+        <label>③ 추가 규칙 / 특수 행동 <span class="hint" style="margin-left:6px;">선택 (비워둬도 됨)</span></label>
+        <textarea name="reaction-bot.character.custom-rules"
+                  data-rec-min="0" data-rec-max="300"
+                  placeholder="예) 포켓몬 얘기 나오면 타입 상성 자연스럽게 활용. 보스전엔 다급한 톤. 호명 시 반드시 반응."></textarea>
+        <div class="char-count" data-for="reaction-bot.character.custom-rules">0자 · 권장 0~300자</div>
+
+        <div class="restart-note">⚠ 캐릭터 프롬프트 변경은 서버 재기동 후 적용됩니다.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>TTS (음성 합성)</h2>
+      <div class="hint">Microsoft Edge 무료 TTS만 지원. 키 불필요.</div>
+
+      <label>Voice</label>
+      <select name="reaction-bot.tts.voice">
+        <option value="ko-KR-SunHiNeural">ko-KR-SunHiNeural — 여, 밝음</option>
+        <option value="ko-KR-InJoonNeural">ko-KR-InJoonNeural — 남, 중후</option>
+        <option value="ko-KR-HyunsuMultilingualNeural">ko-KR-HyunsuMultilingualNeural — 남, 다국어</option>
+      </select>
     </div>
 
     <div class="card">
@@ -164,6 +278,24 @@
         <input type="checkbox" id="idle-trigger" name="reaction-bot.idle-trigger.enabled">
         <label for="idle-trigger" style="margin:0;">능동 발문 (조용할 때 봇이 먼저 말 걸기)</label>
       </div>
+
+      <div class="toggle">
+        <input type="checkbox" id="respond-addressed" name="reaction-bot.speech.respond-only-when-addressed">
+        <label for="respond-addressed" style="margin:0;">호명-전용 모드 (봇 이름 부를 때만 응답 — LLM 호출도 줄어 토큰 절약)</label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>게임별 추가 프로세스 <span class="badge">선택</span></h2>
+      <div class="hint">
+        특정 게임을 할 때만 의미 있는 외부 API 연동. 해당 게임을 안 하면 끄는 게 좋아요 (불필요한 네트워크 호출 + 프롬프트 토큰 절약).
+      </div>
+
+      <div class="toggle">
+        <input type="checkbox" id="pokemon-enabled" name="reaction-bot.pokemon.enabled">
+        <label for="pokemon-enabled" style="margin:0;">포켓몬 - PokeAPI에서 종족값/타입/특성 받아와 LLM에 주입</label>
+      </div>
+      <div class="hint">발화에서 포켓몬 이름 감지 시 PokeAPI 호출. 포켓몬 게임이 아니면 끄세요.</div>
     </div>
 
     <button type="submit" id="save-btn">저장</button>
@@ -189,6 +321,72 @@ function showStatus(message, isError) {
   status.className = 'status ' + (isError ? 'err' : 'ok');
 }
 
+// 빈 값으로도 저장이 필요한 키 (textarea 지우기 허용)
+const ALLOW_EMPTY = new Set([
+  'reaction-bot.character.custom-identity',
+  'reaction-bot.character.custom-personality',
+  'reaction-bot.character.custom-rules',
+]);
+
+function setRadioValue(name, value) {
+  const list = form.elements[name];
+  if (!list) return;
+  const target = String(value);
+  // RadioNodeList일 때
+  if (list.length != null && typeof list !== 'string' && list[0] && list[0].type === 'radio') {
+    for (const r of list) r.checked = (r.value === target);
+  } else if (list.type === 'radio') {
+    list.checked = (list.value === target);
+  }
+}
+
+function getRadioValue(name) {
+  const list = form.elements[name];
+  if (!list) return null;
+  if (list.length != null && typeof list !== 'string' && list[0] && list[0].type === 'radio') {
+    for (const r of list) if (r.checked) return r.value;
+    return null;
+  }
+  if (list.type === 'radio') return list.checked ? list.value : null;
+  return null;
+}
+
+function refreshCustomPromptVisibility() {
+  const v = getRadioValue('reaction-bot.character.use-custom-prompt');
+  const wrap = document.getElementById('custom-prompt-fields');
+  if (!wrap) return;
+  if (v === 'true') wrap.classList.remove('hidden');
+  else wrap.classList.add('hidden');
+}
+
+function refreshProviderPaneVisibility() {
+  const sel = document.getElementById('llm-provider');
+  if (!sel) return;
+  const cur = sel.value;
+  for (const pane of document.querySelectorAll('.provider-pane')) {
+    if (pane.dataset.provider === cur) pane.classList.remove('hidden');
+    else pane.classList.add('hidden');
+  }
+}
+
+function updateCharCount(ta) {
+  const target = document.querySelector('.char-count[data-for="' + ta.name + '"]');
+  if (!target) return;
+  const len = ta.value.length;
+  const min = parseInt(ta.dataset.recMin || '0', 10);
+  const max = parseInt(ta.dataset.recMax || '0', 10);
+  let cls = 'ok';
+  if (max > 0 && (len > max || (min > 0 && len < min))) cls = 'warn';
+  target.innerHTML = '<span class="' + cls + '">' + len + '자</span> · 권장 ' + min + '~' + max + '자';
+}
+
+function bindCharCounters() {
+  for (const ta of document.querySelectorAll('textarea[data-rec-max]')) {
+    ta.addEventListener('input', () => updateCharCount(ta));
+    updateCharCount(ta);
+  }
+}
+
 async function load() {
   try {
     const res = await fetch('/api/config');
@@ -197,16 +395,36 @@ async function load() {
     for (const [key, val] of Object.entries(cfg)) {
       const el = form.elements[key];
       if (!el) continue;
+      // 라디오 그룹 (RadioNodeList)
+      if (el.length != null && typeof el !== 'string' && el[0] && el[0].type === 'radio') {
+        setRadioValue(key, val);
+        continue;
+      }
       if (el.type === 'checkbox') {
         el.checked = !!val;
+      } else if (el.type === 'radio') {
+        setRadioValue(key, val);
       } else {
         el.value = val == null ? '' : String(val);
       }
     }
+    refreshCustomPromptVisibility();
+    refreshProviderPaneVisibility();
+    bindCharCounters();
   } catch (e) {
     showStatus('설정 로드 실패: ' + e.message, true);
   }
 }
+
+document.addEventListener('change', (e) => {
+  if (!e.target || !e.target.name) return;
+  if (e.target.name === 'reaction-bot.character.use-custom-prompt') {
+    refreshCustomPromptVisibility();
+  }
+  if (e.target.name === 'reaction-bot.llm.provider') {
+    refreshProviderPaneVisibility();
+  }
+});
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -214,14 +432,30 @@ form.addEventListener('submit', async (e) => {
   saveBtn.textContent = '저장 중...';
 
   const data = {};
+  const seenRadio = new Set();
   for (const el of form.elements) {
     if (!el.name) continue;
     if (el.type === 'checkbox') {
       data[el.name] = el.checked;
+    } else if (el.type === 'radio') {
+      if (seenRadio.has(el.name)) continue;
+      seenRadio.add(el.name);
+      const v = getRadioValue(el.name);
+      if (v === 'true' || v === 'false') {
+        data[el.name] = (v === 'true');
+      } else if (v != null) {
+        data[el.name] = v;
+      }
     } else {
-      const val = el.value.trim();
-      // 빈 칸은 변경 안 함 (서버에서 무시)
-      if (val) data[el.name] = val;
+      const val = el.value;
+      if (ALLOW_EMPTY.has(el.name)) {
+        // textarea: 빈 값도 그대로 보냄 (지우기 허용)
+        data[el.name] = val;
+      } else {
+        const trimmed = val.trim();
+        // 빈 칸은 변경 안 함 (서버에서 무시)
+        if (trimmed) data[el.name] = trimmed;
+      }
     }
   }
 
