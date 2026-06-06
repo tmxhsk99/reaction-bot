@@ -43,11 +43,6 @@ if (-not (Test-Path "config.yml")) {
 reaction-bot:
   anthropic:
     api-key: ""              # https://console.anthropic.com/settings/keys
-  tts:
-    provider: "azure"        # azure 또는 edge
-    azure:
-      key: ""                # https://portal.azure.com Speech 리소스 키
-      region: "koreacentral"
   character:
     name: "리봇"
     streamer-name: "스트리머"

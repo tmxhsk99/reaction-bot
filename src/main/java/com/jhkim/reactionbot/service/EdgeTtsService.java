@@ -19,14 +19,13 @@ import java.nio.file.Paths;
 import java.util.UUID;
 
 /**
- * Microsoft Edge 무료 TTS.
+ * Microsoft Edge 무료 TTS (유일하게 지원되는 TTS provider).
  * scripts/tts_edge.py를 ProcessBuilder로 호출. API 키 불필요.
  * 한국어 음성은 현재 3개만 가용 (SunHi, InJoon, HyunsuMultilingual).
- * reaction-bot.tts.provider=edge 일 때만 활성화.
  */
 @Slf4j
 @Service
-@ConditionalOnProperty(name = "reaction-bot.tts.provider", havingValue = "edge")
+@ConditionalOnProperty(name = "reaction-bot.tts.provider", havingValue = "edge", matchIfMissing = true)
 @RequiredArgsConstructor
 public class EdgeTtsService implements TtsService {
 

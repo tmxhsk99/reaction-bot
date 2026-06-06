@@ -64,8 +64,6 @@ pip install --user numpy sounddevice requests faster-whisper webrtcvad-wheels ed
 | 환경변수 | 용도 | 기본값 |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Claude API 키 | - |
-| `AZURE_SPEECH_KEY` | Azure TTS 키 (`tts.provider=azure`일 때만) | - |
-| `AZURE_SPEECH_REGION` | Azure Speech region | `koreacentral` |
 | `BOT_NAME` | 봇 이름 | `리봇` |
 | `STREAMER_NAME` | 스트리머 이름 | `로크만` |
 | `OBS_PASSWORD` | OBS WebSocket 비밀번호 | - |
@@ -77,16 +75,9 @@ pip install --user numpy sounddevice requests faster-whisper webrtcvad-wheels ed
 
 > **Claude Pro ≠ API**: claude.ai 월 구독(Pro)과 API 크레딧은 별개입니다. console.anthropic.com에서 **API 크레딧을 따로 충전**해야 합니다 (최소 $5).
 
-### TTS provider
+### TTS
 
-[application.yml](src/main/resources/application.yml)의 `tts.provider`:
-
-| provider | 비용 | 한국어 음성 | API 키 |
-|---|---|---|---|
-| `azure` | 무료 tier 월 50만 자 | 10개 | 필요 |
-| `edge` (기본) | 완전 무료 | 3개 | 불필요 |
-
-Azure 키 발급: [portal.azure.com](https://portal.azure.com) → Speech services → Create (Free F0)
+Microsoft Edge 무료 TTS만 지원합니다. API 키 불필요. 한국어 음성 3종 (SunHi/InJoon/HyunsuMultilingual).
 
 ---
 
