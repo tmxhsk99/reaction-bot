@@ -137,6 +137,13 @@ public class ClaudeCliService implements LlmProvider {
                 isBlank(cfg.getWorkingDir()) ? "(봇 cwd)" : cfg.getWorkingDir(),
                 cfg.isUseStdinPrompt(),
                 cfg.getTimeoutSec());
+        // claude-cli 모드는 Pro/Max 구독 인증 사용이 목적. 환경에 ANTHROPIC_API_KEY 가 있으면
+        // CLI 가 그걸 우선시해 종량 과금이 발생할 수 있어, 자식 프로세스 환경에서 제거할 예정임을 안내.
+        String envKey = System.getenv("ANTHROPIC_API_KEY");
+        if (envKey != null && !envKey.isBlank()) {
+            log.info("claude-cli 모드: ANTHROPIC_API_KEY 환경변수가 감지됨 → CLI subprocess 에서 제거하여 "
+                   + "구독 인증(claude login)을 강제 사용합니다.");
+        }
     }
 
     /**
@@ -583,6 +590,11 @@ public class ClaudeCliService implements LlmProvider {
         // Node 계열 도구가 UTF-8 콘솔 출력을 안정적으로 내도록 강제.
         pb.environment().put("PYTHONIOENCODING", "utf-8");
         pb.environment().put("LANG", "en_US.UTF-8");
+        // claude-cli 모드는 Pro/Max 구독 인증 전용. 환경에 ANTHROPIC_API_KEY 가 박혀있으면
+        // CLI 가 그걸 우선시해 종량 과금이 발생 → 자식 프로세스 환경에서 명시적으로 제거.
+        // (호출자의 셸 환경은 그대로 두고, 봇이 만든 subprocess 환경에서만 unset.)
+        pb.environment().remove("ANTHROPIC_API_KEY");
+        pb.environment().remove("ANTHROPIC_AUTH_TOKEN");
         pb.redirectErrorStream(false);
 
         log.debug("Claude CLI 호출. argc={}, stdin={}, model={}, allowedTools={}, timeout={}s",

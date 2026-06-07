@@ -317,6 +317,7 @@ max-pokemon: 2         # 2=싱글배틀, 4=더블배틀
 | 봇이 자기 목소리에 반응 | 헤드폰 사용 권장. 또는 `speech.grace-period-ms`를 1500~2000으로 |
 | OBS 캡처 실패 | OBS 실행 중 + WebSocket Server 활성화 확인 |
 | PASS만 계속 | `speech.nudge-after-pass-count`를 1~2로, ollama면 `assertive: true` 확인 |
+| claude-cli 모드인데 종량 과금 의심 | 봇이 자식 프로세스에 `ANTHROPIC_API_KEY` 자동 제거하므로 봇 호출 경로는 안전. 그래도 의심되면 환경변수 직접 unset 후 `claude login` 재실행 |
 
 ---
 
