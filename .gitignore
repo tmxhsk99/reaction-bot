@@ -35,6 +35,12 @@ venv/
 # ===== TTS 런타임 생성물 =====
 tts-output/
 
+# ===== /config UI 저장값 + 런타임 캐시 =====
+# config.yml: /config UI 가 저장하는 사용자 설정. spring.config.import 로 머지됨.
+# data/: PokéAPI 일어 인덱스 캐시 등 봇 런타임 부산물.
+config.yml
+data/
+
 # ===== Whisper 모델 캐시 (큰 파일들) =====
 # faster-whisper는 사용자 홈 디렉토리에 캐싱하므로 보통 문제없지만
 # 혹시 프로젝트 내에 떨어지면 무시

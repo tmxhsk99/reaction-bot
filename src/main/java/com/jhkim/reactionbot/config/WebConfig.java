@@ -51,5 +51,11 @@ public class WebConfig implements WebMvcConfigurer {
                         "/bg/*.mp4")
                 .addResourceLocations("file:./assets/bg/")
                 .setCachePeriod(0);
+
+        // 포켓몬 오버레이 정적 리소스 - 브라우저 캐싱 끔. 개발 중 HTML/JS 변경 즉시 반영.
+        // 안 박으면 옛 데모 폴백 들어있던 JS가 그대로 들고와져 "데모가 계속 뜬다"는 증상 발생.
+        registry.addResourceHandler("/pokemon-overlay/**")
+                .addResourceLocations("classpath:/static/pokemon-overlay/")
+                .setCachePeriod(0);
     }
 }

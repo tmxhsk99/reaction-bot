@@ -11,6 +11,11 @@ spring:
       - classpath:ollama.yml
       - classpath:claude-cli.yml
       - classpath:codex-cli.yml
+      # /config UI가 저장하는 사용자 설정. cwd 기준 ./config.yml.
+      # optional: 파일이 없어도 기동 실패 안 함.
+      # spring.config.import 는 가장 마지막에 import 된 소스가 우선 → application.yml/classpath 값보다
+      # config.yml 이 우선 덮어쓴다. 외부 옵션(--spring.config.additional-location) 불필요.
+      - optional:file:./config.yml
 
 reaction-bot:
   # 캐릭터 이름 / 스트리머 이름 (환경변수로 덮어쓰기 가능)
@@ -146,13 +151,17 @@ reaction-bot:
     # 켜두면 화면 안의 포켓몬(싱글 2, 더블 4)을 도트/한글명/세대 기준 종족값과 함께 보여줌.
     # OBS 브라우저 소스에 띄워두는 용도. provider는 reaction-bot.llm.provider 그대로 재사용.
     overlay:
-      enabled: false
-      generation: 9                # 1~9. 해당 세대 시점 종족값/타입 데이터 기준
+      enabled: true
+      generation: 9                # 1~9. 해당 세대 시점 종족값/타입 데이터 기준 (BotProperties.Overlay 디폴트와 일치)
       mode: "manual"               # "auto" | "manual" | "speech-precapture"
       refresh-interval-ms: 10000   # auto 모드 폴링 주기. 너무 짧으면 LLM 호출 폭증
       max-pokemon: 2               # 카드 최대 개수. 2=싱글배틀, 4=더블배틀
       infer-moves: false           # true면 LLM에게 기술 4개 추측까지 요청. 응답 더 느려짐
       crop-region: ""              # "x,y,w,h" 0~1 정규화 좌표. 빈 값=전체. 예: "0,0.6,1,0.4"
+      # 봇 자체 오버레이를 화면에 함께 띄울 때, 그 영역을 검정 박스로 마스킹해
+      # LLM이 자기 카드를 분석 대상으로 잡지 않게 함. ";"로 여러 영역 지정 가능.
+      # 예: "0,0,0.25,0.5" (좌측 25% 가로, 위 50% 세로 마스킹)
+      ignore-region: ""
 
 logging:
   level:

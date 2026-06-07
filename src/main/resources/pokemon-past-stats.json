@@ -1,0 +1,31 @@
+{
+  "_comment_1": "세대별 종족값(base stats) 변경 매핑.",
+  "_comment_2": "PokéAPI 가 base stats 의 past_values 를 제공하지 않아 수동 관리. 빈 매핑이어도 안전(현재값 사용).",
+
+  "_format_keys": "PokéAPI 영문 슬러그 (예: butterfree, beedrill, pidgeot). 메가/지역폼은 그 슬러그 그대로.",
+  "_format_value": "{ until_gen: N, stats: { hp, atk, def, spa, spd, spe } } — 일부 stat 만 적어도 됨 (나머지는 현재 값).",
+  "_format_array": "여러 번 변경된 종은 배열로: [ { until_gen: 4, stats: {...} }, { until_gen: 6, stats: {...} } ]",
+
+  "_semantics_1": "조회 시 generation <= until_gen 인 가장 작은 until_gen 매핑을 적용. 매핑 없으면 현재값.",
+  "_semantics_2": "예: butterfree until_gen=5, stats={spa:80} → 1~5세대 조회 시 spa=80, 6~9세대 조회 시 현재 PokéAPI 값(90).",
+
+  "_how_to_add": "Bulbapedia 종 페이지의 'Stats' 섹션에서 'In Generation N' 표를 보고, 변경된 stat 만 적어라. 정확하지 않은 종은 적지 말 것 (잘못된 데이터가 오버레이에 표시됨).",
+  "_source": "https://bulbapedia.bulbagarden.net/wiki/<영문명>_(Pokémon) → Stats 섹션",
+
+  "_section_gen6_xy": "===== 6세대(XY, 2013) 출시 시 종족값 조정. 1~5세대 조회 시 옛 값 사용. =====",
+
+  "butterfree": {
+    "until_gen": 5,
+    "stats": { "spa": 80 }
+  },
+  "beedrill": {
+    "until_gen": 5,
+    "stats": { "atk": 80 }
+  },
+  "pidgeot": {
+    "until_gen": 5,
+    "stats": { "atk": 80, "spa": 70 }
+  },
+
+  "_section_user_additions": "===== 아래에 사용자 정의 매핑 추가. 슬러그/until_gen/stats 형식. ====="
+}

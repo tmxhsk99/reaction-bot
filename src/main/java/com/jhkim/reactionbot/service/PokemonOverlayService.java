@@ -7,8 +7,15 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import javax.imageio.ImageIO;
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -45,6 +52,13 @@ public class PokemonOverlayService {
     private final AtomicReference<OverlayState> state = new AtomicReference<>(OverlayState.empty());
     private final java.util.concurrent.atomic.AtomicBoolean analyzing = new java.util.concurrent.atomic.AtomicBoolean(false);
 
+    /**
+     * 상태 변경 epoch. applyManual / clearCards 가 호출되면 1 증가.
+     * analyze() 는 시작 시 epoch 를 캡처하고, 완료 직전에 같은지 검사 → 다르면 결과 폐기.
+     * → 사용자가 분석 도중 수동 입력하면 분석 결과가 수동 입력을 덮어쓰지 않음.
+     */
+    private final java.util.concurrent.atomic.AtomicLong stateEpoch = new java.util.concurrent.atomic.AtomicLong(0);
+
     public record OverlayState(
             boolean enabled,
             int generation,
@@ -71,6 +85,7 @@ public class PokemonOverlayService {
             int speedRank,            // 1=가장 빠름
             String spriteUrl,
             String artworkUrl,
+            List<PokemonSpeciesService.Weakness> weaknesses, // 세대 적용 약점 (>=2배)
             List<String> inferredMoves // 비어있을 수 있음
     ) {}
 
@@ -103,50 +118,232 @@ public class PokemonOverlayService {
      */
     public OverlayState analyze(boolean force) {
         BotProperties.Overlay cfg = properties.getPokemon().getOverlay();
-        if (!properties.getPokemon().isEnabled() || !cfg.isEnabled()) {
+        // 비활성 케이스를 사일런트로 두면 사용자가 "버튼 눌렀는데 아무 일도 안 일어남"으로 인지.
+        // 분명한 INFO 로그 + lastError 셋업으로 UI에 안내.
+        if (!properties.getPokemon().isEnabled()) {
+            log.info("오버레이 analyze 호출됨 — pokemon.enabled=false 라 비활성. no-op.");
+            setError("pokemon.enabled=false (reaction-bot.pokemon.enabled=true 로 켜고 서버 재기동 필요)");
+            return currentState();
+        }
+        if (!cfg.isEnabled()) {
+            log.info("오버레이 analyze 호출됨 — pokemon.overlay.enabled=false 라 비활성. no-op.");
+            setError("오버레이가 꺼져 있음 (/config 에서 '포켓몬 오버레이' 체크 후 저장 + 서버 재기동)");
             return currentState();
         }
         if (!analyzing.compareAndSet(false, true)) {
-            log.debug("분석 진행 중 - 중복 호출 무시");
+            log.info("오버레이 analyze 호출됨 — 직전 분석 진행 중이라 무시.");
             return currentState();
         }
+        // 시작 시점 epoch 캡처. 완료 직전 비교 → applyManual/clearCards 가 도중에 발생했으면 결과 폐기.
+        long myEpoch = stateEpoch.get();
         try {
-            ScreenCaptureService.Capture cap = screenCapture.captureBase64Jpeg();
+            log.info("오버레이 분석 시작 (mode={}, gen={}, maxPokemon={}, force={}, provider={}, epoch={})",
+                    cfg.getMode(), cfg.getGeneration(), cfg.getMaxPokemon(), force,
+                    properties.getLlm().getProvider(), myEpoch);
+
+            ScreenCaptureService.Capture cap;
+            try {
+                cap = screenCapture.captureBase64Jpeg();
+            } catch (Exception e) {
+                log.warn("오버레이: 화면 캡처 실패", e);
+                setError("화면 캡처 실패: " + e.getMessage());
+                return currentState();
+            }
             if (cap.blank() || cap.base64Jpeg() == null) {
                 log.info("오버레이 분석: 단색 화면 - 카드 비움");
-                updateCards(List.of(), false, null);
+                applyIfFresh(myEpoch, List.of(), false, null);
                 return currentState();
             }
+            log.info("오버레이: 캡처 완료 ({}자 base64). LLM 호출…", cap.base64Jpeg().length());
 
-            String raw = callLlm(cap.base64Jpeg(), cfg);
-            log.debug("오버레이 LLM raw 응답: {}", raw);
+            // crop + ignoreRegion 적용. 봇 자체 오버레이가 화면에 떠있어도 마스킹해서 LLM이 무시.
+            String preparedImage;
+            try {
+                preparedImage = prepareImage(cap.base64Jpeg(), cfg);
+            } catch (Exception e) {
+                log.warn("이미지 전처리 실패. 원본으로 진행: {}", e.getMessage());
+                preparedImage = cap.base64Jpeg();
+            }
+
+            String raw;
+            try {
+                raw = callLlm(preparedImage, cfg);
+            } catch (UnsupportedOperationException uoe) {
+                throw uoe;
+            } catch (Exception e) {
+                log.warn("오버레이: LLM 호출 실패", e);
+                setError("LLM 호출 실패: " + e.getMessage());
+                return currentState();
+            }
+            log.info("오버레이 LLM 응답 수신 ({}자)", raw == null ? 0 : raw.length());
+            log.debug("오버레이 LLM raw: {}", raw);
 
             List<Detected> detected = parseDetections(raw, cfg.getMaxPokemon());
+            log.info("오버레이 LLM 파싱: {}종 추출", detected.size());
             if (detected.isEmpty()) {
                 log.info("오버레이 분석: 포켓몬 미검출");
-                updateCards(List.of(), false, null);
+                applyIfFresh(myEpoch, List.of(), false, null);
                 return currentState();
             }
 
-            if (!force && sameAsPrevious(detected)) {
-                log.debug("오버레이: 직전과 동일 - PokéAPI 재조회 생략");
+            if (!force && sameAsPrevious(detected, cfg.getGeneration())) {
+                log.info("오버레이: 직전과 동일 fingerprint + 세대 — PokéAPI 재조회 생략");
                 return currentState();
             }
 
             List<Card> cards = buildCards(detected, cfg.getGeneration(), cfg.isInferMoves());
             boolean mirror = isMirror(cards);
-            updateCards(cards, mirror, null);
-            log.info("오버레이 갱신: {}종 (mirror={})", cards.size(), mirror);
+            applyIfFresh(myEpoch, cards, mirror, null);
+            log.info("오버레이 갱신 완료: {}종 (mirror={})", cards.size(), mirror);
         } catch (UnsupportedOperationException uoe) {
             log.warn("현재 LLM provider는 raw vision 미지원: {}", uoe.getMessage());
-            setError("현재 LLM provider는 포켓몬 오버레이 미지원");
+            setError("현재 LLM provider(" + properties.getLlm().getProvider() + ")는 raw vision 미지원");
         } catch (Exception e) {
-            log.warn("오버레이 분석 실패: {}", e.getMessage());
+            log.warn("오버레이 분석 실패", e);
             setError(e.getMessage() == null ? "분석 실패" : e.getMessage());
         } finally {
             analyzing.set(false);
         }
         return currentState();
+    }
+
+    // ---------- 수동 입력 (LLM 인식 실패 시 fallback) ----------
+
+    /**
+     * 사용자가 입력한 이름들로 카드 셋업. 일어/한글/영문 어느 입력이든 PokemonSpeciesService.resolveSlug 가 처리.
+     * enabled 체크는 우회 (사용자가 명시적으로 누른 액션). 단, pokemon.enabled=false 면 species 조회는 동작.
+     * maxPokemon 초과분은 컷.
+     */
+    public OverlayState applyManual(List<String> names) {
+        // 진행 중 analyze 가 결과를 덮어쓰지 못하도록 epoch 증가.
+        stateEpoch.incrementAndGet();
+        BotProperties.Overlay cfg = properties.getPokemon().getOverlay();
+        if (names == null || names.isEmpty()) {
+            log.info("수동 입력: 빈 목록 — 카드 비움");
+            updateCards(List.of(), false, null);
+            return currentState();
+        }
+        log.info("수동 입력 적용 시작: {} (gen={}, max={})", names, cfg.getGeneration(), cfg.getMaxPokemon());
+        List<Detected> det = new ArrayList<>();
+        for (String n : names) {
+            if (det.size() >= cfg.getMaxPokemon()) break;
+            if (n == null) continue;
+            String trimmed = n.trim();
+            if (trimmed.isEmpty()) continue;
+            // 일어/한글/영문 모두 nameJa 슬롯에 넣어 buildCards 의 일어 우선 lookup 통과시킴.
+            det.add(new Detected("", trimmed));
+        }
+        if (det.isEmpty()) {
+            updateCards(List.of(), false, null);
+            return currentState();
+        }
+        try {
+            List<Card> cards = buildCards(det, cfg.getGeneration(), cfg.isInferMoves());
+            if (cards.isEmpty()) {
+                log.info("수동 입력: 모든 이름 lookup 실패 (가능 원인: 일어 인덱스 미빌드 + 한글/일어 입력)");
+                setError("입력 이름 매칭 실패. 영문 슬러그(예: garchomp) 또는 정확한 한글명 시도 / 인덱스 빌드 대기.");
+                return currentState();
+            }
+            boolean mirror = isMirror(cards);
+            updateCards(cards, mirror, null);
+            log.info("수동 입력 적용 완료: {}종 (mirror={})", cards.size(), mirror);
+        } catch (Exception e) {
+            log.warn("수동 입력 처리 실패", e);
+            setError("수동 입력 실패: " + e.getMessage());
+        }
+        return currentState();
+    }
+
+    /** 카드 비우기 (수동 초기화). */
+    public OverlayState clearCards() {
+        stateEpoch.incrementAndGet();
+        log.info("오버레이 카드 비움 (수동)");
+        updateCards(List.of(), false, null);
+        return currentState();
+    }
+
+    // ---------- 이미지 전처리 (crop + ignoreRegion 마스킹) ----------
+
+    /**
+     * cropRegion 적용 후 ignoreRegion(들)을 검정 박스로 마스킹한 base64 JPEG 반환.
+     * 둘 다 빈 값이면 원본 그대로 (디코드/재인코드 비용 회피).
+     * 좌표는 0~1 정규화. cropRegion 적용 후 ignoreRegion 좌표는 *남은 이미지* 기준.
+     */
+    private String prepareImage(String base64Jpeg, BotProperties.Overlay cfg) throws Exception {
+        boolean hasCrop = cfg.getCropRegion() != null && !cfg.getCropRegion().isBlank();
+        boolean hasIgnore = cfg.getIgnoreRegion() != null && !cfg.getIgnoreRegion().isBlank();
+        if (!hasCrop && !hasIgnore) return base64Jpeg;
+
+        byte[] bytes = Base64.getDecoder().decode(base64Jpeg);
+        BufferedImage img = ImageIO.read(new ByteArrayInputStream(bytes));
+        if (img == null) return base64Jpeg;
+
+        if (hasCrop) {
+            double[] r = parseRegion(cfg.getCropRegion());
+            if (r != null) {
+                int x = clamp((int) (r[0] * img.getWidth()), 0, img.getWidth() - 1);
+                int y = clamp((int) (r[1] * img.getHeight()), 0, img.getHeight() - 1);
+                int w = clamp((int) (r[2] * img.getWidth()), 1, img.getWidth() - x);
+                int h = clamp((int) (r[3] * img.getHeight()), 1, img.getHeight() - y);
+                BufferedImage sub = img.getSubimage(x, y, w, h);
+                // getSubimage는 원본 공유 view → 독립 사본 만들어 Graphics 변경 가능하게.
+                BufferedImage copy = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+                Graphics2D g = copy.createGraphics();
+                g.drawImage(sub, 0, 0, null);
+                g.dispose();
+                img = copy;
+                log.debug("오버레이: cropRegion 적용 ({}x{})", w, h);
+            }
+        }
+
+        if (hasIgnore) {
+            // copy on write: ignore 적용 시점에 항상 새 이미지로 (원본 그대로 들어왔을 경우 대비)
+            BufferedImage copy = new BufferedImage(img.getWidth(), img.getHeight(), BufferedImage.TYPE_INT_RGB);
+            Graphics2D g = copy.createGraphics();
+            g.drawImage(img, 0, 0, null);
+            g.setColor(Color.BLACK);
+            for (String part : cfg.getIgnoreRegion().split(";")) {
+                double[] r = parseRegion(part);
+                if (r == null) continue;
+                int x = clamp((int) (r[0] * img.getWidth()), 0, img.getWidth());
+                int y = clamp((int) (r[1] * img.getHeight()), 0, img.getHeight());
+                int w = clamp((int) (r[2] * img.getWidth()), 0, img.getWidth() - x);
+                int h = clamp((int) (r[3] * img.getHeight()), 0, img.getHeight() - y);
+                g.fillRect(x, y, w, h);
+                log.debug("오버레이: ignoreRegion 마스킹 ({},{},{}x{})", x, y, w, h);
+            }
+            g.dispose();
+            img = copy;
+        }
+
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        ImageIO.write(img, "jpg", baos);
+        return Base64.getEncoder().encodeToString(baos.toByteArray());
+    }
+
+    /** "x,y,w,h" → double[4]. 파싱 실패 시 null. */
+    private double[] parseRegion(String s) {
+        if (s == null) return null;
+        String t = s.trim();
+        if (t.isEmpty()) return null;
+        try {
+            String[] parts = t.split(",");
+            if (parts.length != 4) return null;
+            double[] r = new double[4];
+            for (int i = 0; i < 4; i++) {
+                r[i] = Double.parseDouble(parts[i].trim());
+                if (r[i] < 0) r[i] = 0;
+                if (r[i] > 1) r[i] = 1;
+            }
+            return r;
+        } catch (Exception e) {
+            log.debug("region 파싱 실패: '{}'", s);
+            return null;
+        }
+    }
+
+    private static int clamp(int v, int lo, int hi) {
+        return Math.max(lo, Math.min(hi, v));
     }
 
     // ---------- LLM 호출 ----------
@@ -156,13 +353,17 @@ public class PokemonOverlayService {
             반드시 JSON 객체만 출력. 마크다운 코드펜스 금지. 다른 텍스트 일절 금지.
 
             스키마:
-            {"pokemons":[{"slug":"<영문 PokéAPI 슬러그, 예: garchomp>","name_ja":"<일어 카타카나 이름>"}]}
+            {"pokemons":[{"name_ja":"<일어 카타카나 이름 (필수)>","slug":"<영문 PokéAPI 슬러그 (보조)>"}]}
 
-            규칙:
-            - 화면에 보이는 포켓몬을 위에서 아래 또는 왼쪽에서 오른쪽 순서로 배열. 최대 N마리.
-            - "닉네임/별칭" 표시는 무시하고 포켓몬 외형(도트/모델)으로 종을 판단.
+            규칙 — 일어 이름을 1순위로 정확히 뽑아라:
+            - name_ja: 카타카나 표기. 게임 화면이 일본판이라 이름 라벨이 보이면 그걸 정확히 읽기.
+              화면에 일어 이름이 안 보여도 포켓몬 외형으로 식별한 종의 공식 일어명을 카타카나로 적어라.
+              예: ガブリアス, ホウオウ, カビゴン, リザードン, ピカチュウ, サーナイト
+            - slug: 잘 알면 적고, 아니면 빈 문자열로 둬도 된다. 일어가 우선이라 slug 모르면 강제로 추측 금지.
+              형식은 소문자/영문/'-'. 메가·지역폼은 "charizard-mega-x", "vulpix-alola" 형식.
+            - 화면의 "닉네임/별칭" 표시는 무시하고 외형(도트/모델)으로 종을 판단.
             - 같은 종이 두 마리면 똑같이 두 번 포함 (중복 OK).
-            - 슬러그는 소문자, 영문, '-' 만. 메가/지역폼은 "charizard-mega-x", "vulpix-alola" 형식.
+            - 최대 N마리.
             - 종을 확실히 모르면 그 포켓몬은 생략 (틀리느니 빠뜨려라).
             - 화면에 포켓몬 전투/메뉴/대전 UI가 보이지 않으면 빈 배열 반환.
             """;
@@ -230,28 +431,48 @@ public class PokemonOverlayService {
     // ---------- 변화 감지 ----------
 
     /**
-     * 직전 카드 슬러그 집합과 비교. 정렬·중복 보존을 위해 멀티셋(리스트 정렬) 비교.
-     * 같으면 PokéAPI 재호출 생략.
+     * 직전 카드 fingerprint 와 비교. 같으면 PokéAPI 재호출 생략.
+     *
+     * fingerprint 키:
+     *  - 종 식별: slug + "|" + nameJa (slug 가 빈 경우에도 nameJa 로 구분 — 일어 우선 lookup 정책 대응)
+     *  - 정렬 멀티셋 비교로 순서 무관
+     *  - generation 도 비교 — 사용자가 /config 에서 세대를 바꾸면 종이 같아도 종족값/타입/약점이 달라야 하므로
+     *    무조건 재빌드해야 한다.
      */
-    private boolean sameAsPrevious(List<Detected> next) {
-        List<Card> prev = state.get().cards();
+    private boolean sameAsPrevious(List<Detected> next, int generation) {
+        OverlayState cur = state.get();
+        if (cur.generation() != generation) return false;
+        List<Card> prev = cur.cards();
         if (prev.size() != next.size()) return false;
-        List<String> a = prev.stream().map(Card::slug).sorted().toList();
-        List<String> b = next.stream().map(Detected::slug).sorted().toList();
+        List<String> a = prev.stream().map(c -> safe(c.slug()) + "|" + safe(c.nameJa())).sorted().toList();
+        List<String> b = next.stream().map(d -> safe(d.slug()) + "|" + safe(d.nameJa())).sorted().toList();
         return a.equals(b) && !a.isEmpty();
     }
+
+    private static String safe(String s) { return s == null ? "" : s; }
 
     // ---------- 카드 구성 ----------
 
     private List<Card> buildCards(List<Detected> detected, int generation, boolean inferMoves) {
         List<Card> raw = new ArrayList<>();
         for (Detected d : detected) {
-            String key = !d.slug().isEmpty() ? d.slug() : d.nameJa();
-            PokemonSpeciesService.SpeciesInfo info = speciesService.lookup(key, generation);
+            // 일어 카타카나가 게임 표기·외형 모두에서 더 안정적 → 1순위.
+            // 일어 인덱스가 아직 안 빌드되어 있거나 인덱스에 없으면 영문 slug로 폴백.
+            PokemonSpeciesService.SpeciesInfo info = null;
+            if (!d.nameJa().isEmpty()) {
+                info = speciesService.lookup(d.nameJa(), generation);
+                if (info == null) {
+                    log.debug("species 미해결(ja): '{}'. slug 폴백 시도.", d.nameJa());
+                }
+            }
+            if (info == null && !d.slug().isEmpty()) {
+                info = speciesService.lookup(d.slug(), generation);
+            }
             if (info == null) {
-                log.debug("species 미해결: slug='{}', ja='{}'", d.slug(), d.nameJa());
+                log.debug("species 미해결: ja='{}', slug='{}'", d.nameJa(), d.slug());
                 continue;
             }
+            List<PokemonSpeciesService.Weakness> weaks = speciesService.computeWeaknesses(info.types(), generation);
             raw.add(new Card(
                     info.slug(),
                     info.nameKo(),
@@ -268,6 +489,7 @@ public class PokemonOverlayService {
                     0,
                     info.spriteUrl(),
                     info.artworkUrl(),
+                    weaks,
                     inferMoves ? List.of() : List.of() // TODO: inferMoves=true시 별도 LLM 호출
             ));
         }
@@ -278,7 +500,7 @@ public class PokemonOverlayService {
             ranked.add(new Card(
                     c.slug(), c.nameKo(), c.nameJa(), c.generation(), c.types(),
                     c.hp(), c.atk(), c.def(), c.spa(), c.spd(), c.spe(), c.statTotal(),
-                    i + 1, c.spriteUrl(), c.artworkUrl(), c.inferredMoves()
+                    i + 1, c.spriteUrl(), c.artworkUrl(), c.weaknesses(), c.inferredMoves()
             ));
         }
         return ranked;
@@ -292,6 +514,20 @@ public class PokemonOverlayService {
     }
 
     // ---------- 상태 갱신 ----------
+
+    /**
+     * analyze 결과 반영. 시작 시점의 epoch 와 현재 epoch 가 다르면(=수동 입력/초기화가 끼어들었으면) 결과 폐기.
+     * race window 가 완전히 0 은 아니지만, 분석이 수초 걸리는 데 비해 user mutation 은 즉시라서
+     * 99.x% 케이스 차단. 완전 직렬화가 필요하면 synchronized 블록으로 격상 가능.
+     */
+    private void applyIfFresh(long expectedEpoch, List<Card> cards, boolean mirror, String error) {
+        long now = stateEpoch.get();
+        if (now != expectedEpoch) {
+            log.info("오버레이: 분석 중 사용자 mutation 감지 (epoch {}→{}) — 결과 폐기.", expectedEpoch, now);
+            return;
+        }
+        updateCards(cards, mirror, error);
+    }
 
     private void updateCards(List<Card> cards, boolean mirror, String error) {
         BotProperties.Overlay cfg = properties.getPokemon().getOverlay();
