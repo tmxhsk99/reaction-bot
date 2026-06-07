@@ -278,6 +278,7 @@ max-pokemon: 2         # 2=싱글배틀, 4=더블배틀
 ### 알아둘 점
 
 - **일어 인덱스 디스크 캐시**: 첫 기동 시 PokéAPI에 ~1300회 species 호출이 백그라운드로 들어감 (수십 초). 결과는 `./data/pokemon-name-index.json`에 저장 → **다음 기동부터는 디스크에서 즉시 로드, PokéAPI 호출 0회**. 새 세대 출시 등으로 갱신이 필요하면 파일 삭제 후 재기동, 또는 `POST /api/pokemon-overlay/rebuild-index`로 백그라운드 재빌드. 빌드 중에도 옛 인덱스로 자동완성/lookup 계속 동작.
+- **세대별 종족값 override**: PokéAPI 가 종족값의 `past_values` 를 제공하지 않아 [pokemon-past-stats.json](src/main/resources/pokemon-past-stats.json)으로 수동 관리. 옛 세대 조회 시 그 시점 종족값으로 자동 덮어씀. 변경된 종만 적으면 되고(나머지는 자동으로 현재값), 일부 stat 만 적어도 됨. 파일 최상단 주석에 추가 가이드 + Bulbapedia 링크.
 - **도트 폰트 인식**: 화면 텍스트가 도트(픽셀) 폰트면 LLM 인식 정확도가 떨어짐. 프롬프트가 "텍스트 무시 → 외형으로 식별"을 강제하지만, 안 잡히면 `?edit=1`로 수동 입력.
 - **demo 모드**: `?demo=1` URL에서만 데모 카드(잠만보·한카리아스 등) 표시. 평소엔 절대 안 뜸. 헤더에 노란 `DEMO` 배지가 보이면 데모 상태.
 

@@ -7,7 +7,10 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
+
+import java.io.InputStream;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -59,6 +62,13 @@ public class PokemonSpeciesService {
     // 일어(가타카나/히라가나) → 영문 슬러그 lazy 인덱스. 처음 요청 시 한 번 빌드.
     private volatile Map<String, String> jaToSlug = null;
 
+    /**
+     * 세대별 종족값 override 매핑. classpath:pokemon-past-stats.json 에서 로드.
+     * PokéAPI 가 past_values 를 안 줘서 수동 관리. 빈 매핑이어도 안전(현재값 사용).
+     */
+    private record PastStats(int untilGen, Map<String, Integer> stats) {}
+    private volatile Map<String, List<PastStats>> pastStatsBySlug = Map.of();
+
     @Value("${user.dir:.}")
     private String workingDir;
 
@@ -84,6 +94,8 @@ public class PokemonSpeciesService {
      */
     @PostConstruct
     public void init() {
+        // 세대별 종족값 매핑은 overlay 비활성이어도 로드 (작은 비용). 활성화 시점에 즉시 활용 가능.
+        loadPastStatsMappings();
         if (!properties.getPokemon().isEnabled() || !properties.getPokemon().getOverlay().isEnabled()) {
             log.info("PokemonSpeciesService: overlay 비활성 — 일어 인덱스 워밍업 생략.");
             return;
@@ -222,7 +234,7 @@ public class PokemonSpeciesService {
             int genIntroduced = parseGenerationUrl(species.path("generation").path("url").asText(""));
 
             List<String> types = resolveTypes(pokemon, generation);
-            Stats stats = parseStats(pokemon);
+            Stats stats = applyPastStats(slug, generation, parseStats(pokemon));
             String sprite = pokemon.path("sprites").path("front_default").asText("");
             String artwork = pokemon.path("sprites").path("other")
                     .path("official-artwork").path("front_default").asText("");
@@ -421,6 +433,90 @@ public class PokemonSpeciesService {
             if (!name.isEmpty()) out.add(name);
         }
         return out;
+    }
+
+    // ---------- 세대별 종족값 override ----------
+
+    /**
+     * classpath:pokemon-past-stats.json 로드. 형식 예:
+     *   { "butterfree": { "until_gen": 5, "stats": { "spa": 80 } } }
+     *   또는 배열: { "slug": [ { "until_gen": 4, "stats": {...} }, { "until_gen": 6, "stats": {...} } ] }
+     * "_" 로 시작하는 키는 주석/섹션 마커로 무시.
+     * 파일 없거나 파싱 실패 시 빈 매핑 (override 적용 안 됨, 현재값만 사용).
+     */
+    private void loadPastStatsMappings() {
+        try (InputStream is = new ClassPathResource("pokemon-past-stats.json").getInputStream()) {
+            JsonNode root = objectMapper.readTree(is);
+            Map<String, List<PastStats>> tmp = new HashMap<>();
+            root.fields().forEachRemaining(e -> {
+                String slug = e.getKey();
+                if (slug == null || slug.startsWith("_")) return;
+                JsonNode val = e.getValue();
+                List<PastStats> list = new ArrayList<>();
+                if (val.isArray()) {
+                    for (JsonNode n : val) {
+                        PastStats p = parsePastStatsEntry(n);
+                        if (p != null) list.add(p);
+                    }
+                } else if (val.isObject()) {
+                    PastStats p = parsePastStatsEntry(val);
+                    if (p != null) list.add(p);
+                }
+                if (!list.isEmpty()) {
+                    list.sort(Comparator.comparingInt(PastStats::untilGen));
+                    tmp.put(slug.toLowerCase(), list);
+                }
+            });
+            pastStatsBySlug = tmp;
+            log.info("세대별 종족값 매핑 로드 완료: {}종", tmp.size());
+        } catch (Exception e) {
+            pastStatsBySlug = Map.of();
+            log.warn("pokemon-past-stats.json 로드 실패: {} — override 없이 진행.", e.getMessage());
+        }
+    }
+
+    private PastStats parsePastStatsEntry(JsonNode node) {
+        if (node == null || !node.isObject()) return null;
+        int until = node.path("until_gen").asInt(0);
+        if (until <= 0) return null;
+        JsonNode statsNode = node.path("stats");
+        if (!statsNode.isObject()) return null;
+        Map<String, Integer> stats = new HashMap<>();
+        statsNode.fields().forEachRemaining(e -> {
+            String k = e.getKey();
+            int v = e.getValue().asInt(-1);
+            if (v >= 0) stats.put(k, v);
+        });
+        if (stats.isEmpty()) return null;
+        return new PastStats(until, stats);
+    }
+
+    /**
+     * 매핑에 등록된 종이면 generation <= until_gen 인 가장 작은 매핑을 적용.
+     * 일부 stat 만 적힌 매핑은 그 stat 만 덮어쓰고 나머지는 current 그대로.
+     * 매핑 없거나 generation 이 모든 until_gen 보다 크면 current 그대로 반환.
+     */
+    private Stats applyPastStats(String slug, int generation, Stats current) {
+        if (slug == null) return current;
+        List<PastStats> entries = pastStatsBySlug.get(slug.toLowerCase());
+        if (entries == null || entries.isEmpty()) return current;
+        for (PastStats p : entries) {
+            if (generation <= p.untilGen()) {
+                Map<String, Integer> s = p.stats();
+                Stats overridden = new Stats(
+                        s.getOrDefault("hp",  current.hp()),
+                        s.getOrDefault("atk", current.atk()),
+                        s.getOrDefault("def", current.def()),
+                        s.getOrDefault("spa", current.spa()),
+                        s.getOrDefault("spd", current.spd()),
+                        s.getOrDefault("spe", current.spe())
+                );
+                log.debug("종족값 override 적용 ({} gen={} untilGen={}): {} → {}",
+                        slug, generation, p.untilGen(), current, overridden);
+                return overridden;
+            }
+        }
+        return current;
     }
 
     private Stats parseStats(JsonNode pokemon) {
