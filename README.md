@@ -277,7 +277,7 @@ max-pokemon: 2         # 2=싱글배틀, 4=더블배틀
 
 ### 알아둘 점
 
-- **일어 인덱스 워밍업**: 첫 기동 시 PokéAPI에 ~1300회 species 호출이 백그라운드로 들어감 (수십 초). 워밍업 중에는 자동완성/한글 입력이 불완전할 수 있고, 영문 슬러그(예: `garchomp`)만 즉시 동작. 워밍업 끝나면 자동완성에 한글/일어가 같이 잡힘.
+- **일어 인덱스 디스크 캐시**: 첫 기동 시 PokéAPI에 ~1300회 species 호출이 백그라운드로 들어감 (수십 초). 결과는 `./data/pokemon-name-index.json`에 저장 → **다음 기동부터는 디스크에서 즉시 로드, PokéAPI 호출 0회**. 새 세대 출시 등으로 갱신이 필요하면 파일 삭제 후 재기동, 또는 `POST /api/pokemon-overlay/rebuild-index`로 백그라운드 재빌드. 빌드 중에도 옛 인덱스로 자동완성/lookup 계속 동작.
 - **도트 폰트 인식**: 화면 텍스트가 도트(픽셀) 폰트면 LLM 인식 정확도가 떨어짐. 프롬프트가 "텍스트 무시 → 외형으로 식별"을 강제하지만, 안 잡히면 `?edit=1`로 수동 입력.
 - **demo 모드**: `?demo=1` URL에서만 데모 카드(잠만보·한카리아스 등) 표시. 평소엔 절대 안 뜸. 헤더에 노란 `DEMO` 배지가 보이면 데모 상태.
 
@@ -301,6 +301,7 @@ max-pokemon: 2         # 2=싱글배틀, 4=더블배틀
 | POST | `/api/pokemon-overlay/manual` | 수동 입력 `{"names":["한카리아스",...]}` |
 | DELETE | `/api/pokemon-overlay/cards` | 카드 비우기 |
 | GET | `/api/pokemon-overlay/suggest?q=...` | 자동완성 후보 |
+| POST | `/api/pokemon-overlay/rebuild-index` | 일어 인덱스 강제 재빌드 (디스크 캐시 갱신) |
 
 ---
 

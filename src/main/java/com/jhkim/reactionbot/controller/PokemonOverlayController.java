@@ -83,4 +83,16 @@ public class PokemonOverlayController {
                                 @RequestParam(value = "limit", defaultValue = "8") int limit) {
         return speciesService.suggest(q, limit);
     }
+
+    /**
+     * 일어 인덱스 강제 재빌드 트리거. 새 세대 출시 등 PokéAPI 데이터 갱신이 필요할 때.
+     * 비동기 — 빌드 중에도 옛 인덱스로 자동완성/lookup 계속 동작.
+     */
+    @PostMapping("/rebuild-index")
+    public Map<String, String> rebuildIndex() {
+        log.info("인덱스 재빌드 요청 수신");
+        speciesService.triggerRebuild();
+        return Map.of("status", "started",
+                "message", "백그라운드 재빌드 시작. 수십 초 후 ./data/pokemon-name-index.json 갱신.");
+    }
 }

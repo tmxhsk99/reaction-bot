@@ -6,18 +6,23 @@ import com.jhkim.reactionbot.config.BotProperties;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
@@ -54,12 +59,28 @@ public class PokemonSpeciesService {
     // 일어(가타카나/히라가나) → 영문 슬러그 lazy 인덱스. 처음 요청 시 한 번 빌드.
     private volatile Map<String, String> jaToSlug = null;
 
+    @Value("${user.dir:.}")
+    private String workingDir;
+
     /**
-     * overlay 활성 시 startup 시점에 백그라운드로 일어 인덱스 빌드 시작.
-     * 일어 우선 lookup 정책이라 인덱스가 없으면 첫 분석이 동기 빌드로 수십 초 멈춤 → 워밍업으로 회피.
-     * - overlay.enabled=false 면 아예 시작 안 함 (PokéAPI 1300회 호출 부담 방지)
+     * 인덱스 파일 schema. 구조 변경 시 +1 하면 옛 파일은 무효화되어 재빌드됨.
+     * v1: {schema, builtAt, pokeapiBase, size, entries: {name → slug}}
+     */
+    private static final int INDEX_SCHEMA = 1;
+    private static final String INDEX_FILE_NAME = "pokemon-name-index.json";
+
+    /** 디스크 캐시 파일 위치. ./data/ 하위. */
+    private Path indexFile() {
+        return Paths.get(workingDir, "data", INDEX_FILE_NAME);
+    }
+
+    /**
+     * overlay 활성 시 startup 시점에 인덱스 준비.
+     *  1) 디스크 캐시 있으면 그대로 로드 → PokéAPI 호출 0회 (대부분의 재기동 경로)
+     *  2) 없으면 백그라운드 빌드 후 디스크에 저장 → 다음 기동부턴 1)로
+     * - overlay.enabled=false 면 아예 시작 안 함
      * - 가상 스레드라 메인 startup blocking 없음
-     * - 빌드 도중 사용자가 분석 호출하면 인덱스 미완성 → 영문 slug 폴백으로 자연스럽게 동작
+     * - 빌드 도중 사용자가 분석 호출하면 영문 slug 폴백으로 자연스럽게 동작
      */
     @PostConstruct
     public void init() {
@@ -67,15 +88,90 @@ public class PokemonSpeciesService {
             log.info("PokemonSpeciesService: overlay 비활성 — 일어 인덱스 워밍업 생략.");
             return;
         }
-        log.info("PokemonSpeciesService: overlay 활성 — 백그라운드 일어 인덱스 워밍업 시작.");
-        Thread.startVirtualThread(() -> {
-            try {
-                Map<String, String> idx = buildJaIndex();
-                jaToSlug = idx;
-            } catch (Exception e) {
-                log.warn("일어 인덱스 백그라운드 워밍업 실패: {}", e.getMessage());
+        Map<String, String> fromDisk = loadIndexFromDisk();
+        if (fromDisk != null && !fromDisk.isEmpty()) {
+            jaToSlug = fromDisk;
+            log.info("PokemonSpeciesService: 디스크 인덱스 로드 완료 ({}개). PokéAPI 호출 생략.", fromDisk.size());
+            return;
+        }
+        log.info("PokemonSpeciesService: 디스크 인덱스 없음 — 백그라운드 빌드 시작 (이후 ./data/{} 에 저장).", INDEX_FILE_NAME);
+        Thread.startVirtualThread(this::rebuildAndSave);
+    }
+
+    /**
+     * 강제 재빌드. 디스크 파일 무시하고 PokéAPI를 다시 모두 호출 → 새 인덱스로 덮어씀.
+     * /api/pokemon-overlay/rebuild-index 가 호출. 새 세대 출시 등으로 데이터 갱신이 필요할 때.
+     * 비동기 실행 — 빌드 중에도 옛 인덱스로 자동완성/lookup 계속 동작.
+     */
+    public void triggerRebuild() {
+        log.info("PokemonSpeciesService: 인덱스 강제 재빌드 요청 — 백그라운드 시작.");
+        Thread.startVirtualThread(this::rebuildAndSave);
+    }
+
+    private void rebuildAndSave() {
+        try {
+            Map<String, String> idx = buildJaIndex();
+            jaToSlug = idx;
+            saveIndexToDisk(idx);
+        } catch (Exception e) {
+            log.warn("일어 인덱스 빌드/저장 실패: {}", e.getMessage());
+        }
+    }
+
+    /** 디스크 파일 → ConcurrentHashMap. schema 불일치 / pokeapiBase 변경 시 null 반환(=재빌드 유도). */
+    private Map<String, String> loadIndexFromDisk() {
+        Path file = indexFile();
+        if (!Files.exists(file)) return null;
+        try {
+            JsonNode root = objectMapper.readTree(file.toFile());
+            int schema = root.path("schema").asInt(0);
+            if (schema != INDEX_SCHEMA) {
+                log.info("인덱스 schema 불일치 (file={}, 현재={}). 재빌드 예정.", schema, INDEX_SCHEMA);
+                return null;
             }
-        });
+            String storedBase = root.path("pokeapiBase").asText("");
+            String currentBase = properties.getPokemon().getPokeapiBase();
+            if (currentBase != null && !storedBase.isEmpty() && !storedBase.equals(currentBase)) {
+                log.info("인덱스 pokeapiBase 변경 감지 (file='{}', 현재='{}'). 재빌드 예정.", storedBase, currentBase);
+                return null;
+            }
+            JsonNode entries = root.path("entries");
+            if (!entries.isObject()) return null;
+            Map<String, String> out = new ConcurrentHashMap<>();
+            entries.fields().forEachRemaining(e -> {
+                String k = e.getKey();
+                String v = e.getValue().asText("");
+                if (!k.isEmpty() && !v.isEmpty()) out.put(k, v);
+            });
+            return out;
+        } catch (Exception e) {
+            log.warn("인덱스 파일 로드 실패 ({}): {} — 재빌드.", file, e.getMessage());
+            return null;
+        }
+    }
+
+    /** ConcurrentHashMap → 디스크 JSON. 디렉토리 없으면 만들고, 임시 파일에 쓴 뒤 원자적 교체. */
+    private void saveIndexToDisk(Map<String, String> idx) {
+        Path file = indexFile();
+        try {
+            Files.createDirectories(file.getParent());
+            Map<String, Object> root = new LinkedHashMap<>();
+            root.put("schema", INDEX_SCHEMA);
+            root.put("builtAt", Instant.now().toString());
+            root.put("pokeapiBase", properties.getPokemon().getPokeapiBase());
+            root.put("size", idx.size());
+            // entries 는 정렬해서 diff 친화적으로
+            Map<String, String> sorted = new java.util.TreeMap<>(idx);
+            root.put("entries", sorted);
+
+            Path tmp = file.resolveSibling(INDEX_FILE_NAME + ".tmp");
+            objectMapper.writerWithDefaultPrettyPrinter().writeValue(tmp.toFile(), root);
+            Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            log.info("일어 인덱스 디스크 저장 완료: {} ({}개)", file.toAbsolutePath(), idx.size());
+        } catch (Exception e) {
+            log.warn("인덱스 디스크 저장 실패 ({}): {}", file, e.getMessage());
+        }
     }
 
     public record SpeciesInfo(
