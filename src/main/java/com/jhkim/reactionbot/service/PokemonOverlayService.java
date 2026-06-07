@@ -52,6 +52,13 @@ public class PokemonOverlayService {
     private final AtomicReference<OverlayState> state = new AtomicReference<>(OverlayState.empty());
     private final java.util.concurrent.atomic.AtomicBoolean analyzing = new java.util.concurrent.atomic.AtomicBoolean(false);
 
+    /**
+     * 상태 변경 epoch. applyManual / clearCards 가 호출되면 1 증가.
+     * analyze() 는 시작 시 epoch 를 캡처하고, 완료 직전에 같은지 검사 → 다르면 결과 폐기.
+     * → 사용자가 분석 도중 수동 입력하면 분석 결과가 수동 입력을 덮어쓰지 않음.
+     */
+    private final java.util.concurrent.atomic.AtomicLong stateEpoch = new java.util.concurrent.atomic.AtomicLong(0);
+
     public record OverlayState(
             boolean enabled,
             int generation,
@@ -127,10 +134,12 @@ public class PokemonOverlayService {
             log.info("오버레이 analyze 호출됨 — 직전 분석 진행 중이라 무시.");
             return currentState();
         }
+        // 시작 시점 epoch 캡처. 완료 직전 비교 → applyManual/clearCards 가 도중에 발생했으면 결과 폐기.
+        long myEpoch = stateEpoch.get();
         try {
-            log.info("오버레이 분석 시작 (mode={}, gen={}, maxPokemon={}, force={}, provider={})",
+            log.info("오버레이 분석 시작 (mode={}, gen={}, maxPokemon={}, force={}, provider={}, epoch={})",
                     cfg.getMode(), cfg.getGeneration(), cfg.getMaxPokemon(), force,
-                    properties.getLlm().getProvider());
+                    properties.getLlm().getProvider(), myEpoch);
 
             ScreenCaptureService.Capture cap;
             try {
@@ -142,7 +151,7 @@ public class PokemonOverlayService {
             }
             if (cap.blank() || cap.base64Jpeg() == null) {
                 log.info("오버레이 분석: 단색 화면 - 카드 비움");
-                updateCards(List.of(), false, null);
+                applyIfFresh(myEpoch, List.of(), false, null);
                 return currentState();
             }
             log.info("오버레이: 캡처 완료 ({}자 base64). LLM 호출…", cap.base64Jpeg().length());
@@ -173,18 +182,18 @@ public class PokemonOverlayService {
             log.info("오버레이 LLM 파싱: {}종 추출", detected.size());
             if (detected.isEmpty()) {
                 log.info("오버레이 분석: 포켓몬 미검출");
-                updateCards(List.of(), false, null);
+                applyIfFresh(myEpoch, List.of(), false, null);
                 return currentState();
             }
 
-            if (!force && sameAsPrevious(detected)) {
-                log.info("오버레이: 직전과 동일 슬러그 — PokéAPI 재조회 생략");
+            if (!force && sameAsPrevious(detected, cfg.getGeneration())) {
+                log.info("오버레이: 직전과 동일 fingerprint + 세대 — PokéAPI 재조회 생략");
                 return currentState();
             }
 
             List<Card> cards = buildCards(detected, cfg.getGeneration(), cfg.isInferMoves());
             boolean mirror = isMirror(cards);
-            updateCards(cards, mirror, null);
+            applyIfFresh(myEpoch, cards, mirror, null);
             log.info("오버레이 갱신 완료: {}종 (mirror={})", cards.size(), mirror);
         } catch (UnsupportedOperationException uoe) {
             log.warn("현재 LLM provider는 raw vision 미지원: {}", uoe.getMessage());
@@ -206,6 +215,8 @@ public class PokemonOverlayService {
      * maxPokemon 초과분은 컷.
      */
     public OverlayState applyManual(List<String> names) {
+        // 진행 중 analyze 가 결과를 덮어쓰지 못하도록 epoch 증가.
+        stateEpoch.incrementAndGet();
         BotProperties.Overlay cfg = properties.getPokemon().getOverlay();
         if (names == null || names.isEmpty()) {
             log.info("수동 입력: 빈 목록 — 카드 비움");
@@ -245,6 +256,7 @@ public class PokemonOverlayService {
 
     /** 카드 비우기 (수동 초기화). */
     public OverlayState clearCards() {
+        stateEpoch.incrementAndGet();
         log.info("오버레이 카드 비움 (수동)");
         updateCards(List.of(), false, null);
         return currentState();
@@ -419,16 +431,25 @@ public class PokemonOverlayService {
     // ---------- 변화 감지 ----------
 
     /**
-     * 직전 카드 슬러그 집합과 비교. 정렬·중복 보존을 위해 멀티셋(리스트 정렬) 비교.
-     * 같으면 PokéAPI 재호출 생략.
+     * 직전 카드 fingerprint 와 비교. 같으면 PokéAPI 재호출 생략.
+     *
+     * fingerprint 키:
+     *  - 종 식별: slug + "|" + nameJa (slug 가 빈 경우에도 nameJa 로 구분 — 일어 우선 lookup 정책 대응)
+     *  - 정렬 멀티셋 비교로 순서 무관
+     *  - generation 도 비교 — 사용자가 /config 에서 세대를 바꾸면 종이 같아도 종족값/타입/약점이 달라야 하므로
+     *    무조건 재빌드해야 한다.
      */
-    private boolean sameAsPrevious(List<Detected> next) {
-        List<Card> prev = state.get().cards();
+    private boolean sameAsPrevious(List<Detected> next, int generation) {
+        OverlayState cur = state.get();
+        if (cur.generation() != generation) return false;
+        List<Card> prev = cur.cards();
         if (prev.size() != next.size()) return false;
-        List<String> a = prev.stream().map(Card::slug).sorted().toList();
-        List<String> b = next.stream().map(Detected::slug).sorted().toList();
+        List<String> a = prev.stream().map(c -> safe(c.slug()) + "|" + safe(c.nameJa())).sorted().toList();
+        List<String> b = next.stream().map(d -> safe(d.slug()) + "|" + safe(d.nameJa())).sorted().toList();
         return a.equals(b) && !a.isEmpty();
     }
+
+    private static String safe(String s) { return s == null ? "" : s; }
 
     // ---------- 카드 구성 ----------
 
@@ -493,6 +514,20 @@ public class PokemonOverlayService {
     }
 
     // ---------- 상태 갱신 ----------
+
+    /**
+     * analyze 결과 반영. 시작 시점의 epoch 와 현재 epoch 가 다르면(=수동 입력/초기화가 끼어들었으면) 결과 폐기.
+     * race window 가 완전히 0 은 아니지만, 분석이 수초 걸리는 데 비해 user mutation 은 즉시라서
+     * 99.x% 케이스 차단. 완전 직렬화가 필요하면 synchronized 블록으로 격상 가능.
+     */
+    private void applyIfFresh(long expectedEpoch, List<Card> cards, boolean mirror, String error) {
+        long now = stateEpoch.get();
+        if (now != expectedEpoch) {
+            log.info("오버레이: 분석 중 사용자 mutation 감지 (epoch {}→{}) — 결과 폐기.", expectedEpoch, now);
+            return;
+        }
+        updateCards(cards, mirror, error);
+    }
 
     private void updateCards(List<Card> cards, boolean mirror, String error) {
         BotProperties.Overlay cfg = properties.getPokemon().getOverlay();

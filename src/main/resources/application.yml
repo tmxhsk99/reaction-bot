@@ -152,7 +152,7 @@ reaction-bot:
     # OBS 브라우저 소스에 띄워두는 용도. provider는 reaction-bot.llm.provider 그대로 재사용.
     overlay:
       enabled: true
-      generation: 2                # 1~9. 해당 세대 시점 종족값/타입 데이터 기준
+      generation: 9                # 1~9. 해당 세대 시점 종족값/타입 데이터 기준 (BotProperties.Overlay 디폴트와 일치)
       mode: "manual"               # "auto" | "manual" | "speech-precapture"
       refresh-interval-ms: 10000   # auto 모드 폴링 주기. 너무 짧으면 LLM 호출 폭증
       max-pokemon: 2               # 카드 최대 개수. 2=싱글배틀, 4=더블배틀

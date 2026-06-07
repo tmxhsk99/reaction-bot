@@ -250,7 +250,7 @@ reaction-bot:
 
 URL 끝에 `?edit=1`을 붙이면 헤더 아래 입력바가 노출됨. OBS 송출 창은 `?edit` 빼고, 본인 모니터링 창만 `?edit=1`로 띄우면 됨.
 
-```
+```text
 http://localhost:8080/pokemon-overlay/?edit=1
 ```
 

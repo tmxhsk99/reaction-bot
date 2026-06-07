@@ -571,6 +571,7 @@
 
   // 수동 입력 적용. 입력값을 콤마/공백으로 split해서 서버에 names 배열로 전송.
   async function applyManual() {
+    if (DEMO_MODE) { console.debug('[overlay] DEMO 모드 — manual apply 무시'); return; }
     const input = document.getElementById('manualInput');
     const raw = (input.value || '').trim();
     if (!raw) return;
@@ -598,6 +599,7 @@
   }
 
   async function clearCards() {
+    if (DEMO_MODE) { console.debug('[overlay] DEMO 모드 — clear 무시'); return; }
     console.log('[overlay] DELETE /api/pokemon-overlay/cards');
     try {
       const r = await fetch('/api/pokemon-overlay/cards', { method: 'DELETE' });
@@ -676,6 +678,7 @@
 
   let suggestTimer = null;
   async function fetchSuggest() {
+    if (DEMO_MODE) { renderSuggest([], ''); return; }
     const input = document.getElementById('manualInput');
     const q = lastToken(input.value);
     if (q.length < 1) {
@@ -690,8 +693,9 @@
       const list = await r.json();
       renderSuggest(list, q);
     } catch (e) {
-      // 서버 끊김 / 인덱스 미빌드 → 칩만 비움
+      // 서버 끊김 / 인덱스 미빌드 → 칩 캐시 정리. Enter/Tab 으로 옛 후보가 잘못 커밋되는 것 차단.
       console.debug('[overlay] suggest 실패:', e.message);
+      if (mySeq === suggestSeq) renderSuggest([], '');
     }
   }
 

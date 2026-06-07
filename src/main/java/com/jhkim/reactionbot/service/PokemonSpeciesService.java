@@ -59,8 +59,10 @@ public class PokemonSpeciesService {
             .build();
 
     private final Map<String, CacheEntry> cache = new ConcurrentHashMap<>();
-    // 일어(가타카나/히라가나) → 영문 슬러그 lazy 인덱스. 처음 요청 시 한 번 빌드.
-    private volatile Map<String, String> jaToSlug = null;
+    // 일어(가타카나/히라가나) → 영문 슬러그 인덱스. 초기엔 빈 맵(=lookup 호출은 즉시 미스 반환, 영문 폴백 유도).
+    // 디스크 캐시 로드 / 백그라운드 빌드가 완료되면 volatile 교체.
+    // null 이 아닌 빈 맵으로 초기화한 이유: 워밍업 중 lookup 이 synchronized buildJaIndex 를 호출해 호출 스레드가 차단되는 사고를 끊기 위함.
+    private volatile Map<String, String> jaToSlug = Map.of();
 
     /**
      * 세대별 종족값 override 매핑. classpath:pokemon-past-stats.json 에서 로드.
@@ -270,21 +272,22 @@ public class PokemonSpeciesService {
         String needle = q.trim().toLowerCase();
         if (needle.isEmpty()) return List.of();
         Map<String, String> idx = jaToSlug;
-        if (idx == null) return List.of();
+        if (idx == null || idx.isEmpty()) return List.of();
         if (limit <= 0) limit = 8;
 
+        // 전체 순회 — 컷오프를 두면 ConcurrentHashMap 순서가 비결정적이라 동일 입력에 결과가 달라짐.
+        // 인덱스가 ~2600 엔트리(한글/일어/영문) 라 전체 순회 비용은 마이크로초 단위로 무시 가능.
         List<String> starts = new ArrayList<>();
         List<String> contains = new ArrayList<>();
         for (String key : idx.keySet()) {
             String low = key.toLowerCase();
             if (low.startsWith(needle)) starts.add(key);
             else if (low.contains(needle)) contains.add(key);
-            // 너무 많이 모이면 컷 (성능). limit*8 정도면 정렬 후 충분.
-            if (starts.size() + contains.size() > limit * 8) break;
         }
-        // 짧은 이름 우선 (예: "잠만보"가 "잠만보(별명)" 같은 변형보다 먼저)
-        starts.sort(Comparator.comparingInt(String::length));
-        contains.sort(Comparator.comparingInt(String::length));
+        // 동일 길이 내에서도 안정적 정렬을 위해 길이 → 이름(locale-insensitive) 순.
+        Comparator<String> stable = Comparator.<String>comparingInt(String::length).thenComparing(s -> s);
+        starts.sort(stable);
+        contains.sort(stable);
 
         List<String> out = new ArrayList<>();
         Set<String> seenSlugs = new java.util.HashSet<>();
@@ -302,19 +305,20 @@ public class PokemonSpeciesService {
         return out;
     }
 
-    /** "garchomp" 그대로 또는 일어 "ガブリアス" → 영문 슬러그 */
+    /**
+     * "garchomp" 그대로 또는 일어/한글 → 영문 슬러그.
+     * 인덱스가 아직 비어있으면(워밍업 중) null 반환 — 동기 빌드 절대 안 함.
+     * 호출자(PokemonOverlayService.buildCards 등)가 영문 slug 폴백을 시도하게 둠.
+     */
     private String resolveSlug(String raw) {
         String trimmed = raw.trim();
         // ASCII 알파벳/숫자/-/_만 있으면 영문 슬러그로 간주
         if (trimmed.chars().allMatch(c -> c < 128 && (Character.isLetterOrDigit(c) || c == '-' || c == '_' || c == '.'))) {
             return trimmed.toLowerCase().replace(' ', '-');
         }
-        // 일어/한글/기타 → lazy 인덱스 조회
+        // 일어/한글/기타 → 인덱스 조회. 비어있으면 미스 (영문 폴백 유도).
         Map<String, String> idx = jaToSlug;
-        if (idx == null) {
-            idx = buildJaIndex();
-            jaToSlug = idx;
-        }
+        if (idx == null || idx.isEmpty()) return null;
         return idx.get(trimmed);
     }
 
