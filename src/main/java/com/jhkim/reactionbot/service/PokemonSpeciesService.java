@@ -64,6 +64,21 @@ public class PokemonSpeciesService {
     // null 이 아닌 빈 맵으로 초기화한 이유: 워밍업 중 lookup 이 synchronized buildJaIndex 를 호출해 호출 스레드가 차단되는 사고를 끊기 위함.
     private volatile Map<String, String> jaToSlug = Map.of();
 
+    /** 백그라운드 빌드 진행 중인지 — UI 가 폴링해서 "재빌드 중…" 같은 상태 표시에 사용. */
+    private final java.util.concurrent.atomic.AtomicBoolean indexBuilding = new java.util.concurrent.atomic.AtomicBoolean(false);
+    /** 마지막 성공 빌드/로드 시각. UI 표시용. */
+    private volatile Instant indexBuiltAt = null;
+
+    /** /api/pokemon-overlay/index-status 응답 DTO. */
+    public record IndexStatus(int size, boolean building, String builtAt) {}
+
+    public IndexStatus indexStatus() {
+        Map<String, String> idx = jaToSlug;
+        int size = idx == null ? 0 : idx.size();
+        Instant at = indexBuiltAt;
+        return new IndexStatus(size, indexBuilding.get(), at == null ? null : at.toString());
+    }
+
     /**
      * 세대별 종족값 override 매핑. classpath:pokemon-past-stats.json 에서 로드.
      * PokéAPI 가 past_values 를 안 줘서 수동 관리. 빈 매핑이어도 안전(현재값 사용).
@@ -105,6 +120,7 @@ public class PokemonSpeciesService {
         Map<String, String> fromDisk = loadIndexFromDisk();
         if (fromDisk != null && !fromDisk.isEmpty()) {
             jaToSlug = fromDisk;
+            indexBuiltAt = Instant.now();
             log.info("PokemonSpeciesService: 디스크 인덱스 로드 완료 ({}개). PokéAPI 호출 생략.", fromDisk.size());
             return;
         }
@@ -123,12 +139,23 @@ public class PokemonSpeciesService {
     }
 
     private void rebuildAndSave() {
+        indexBuilding.set(true);
         try {
             Map<String, String> idx = buildJaIndex();
+            // 빌드 결과가 비어있으면(=PokéAPI 접근 실패 가능성) 디스크에 저장하지 않는다.
+            // 빈 결과를 저장하면 다음 기동 때 로드되어 또 빌드를 시도하고, 또 실패하면 빈 파일 덮어쓰기를
+            // 무한 반복하면서 정상 상태로 회복할 수 없게 된다. 저장 생략 → 다음 기동에 재시도 가능.
+            if (idx.isEmpty()) {
+                log.warn("일어 인덱스 빌드 결과 비어있음 (PokéAPI 접근 실패 가능성). 디스크 저장 생략.");
+                return;
+            }
             jaToSlug = idx;
+            indexBuiltAt = Instant.now();
             saveIndexToDisk(idx);
         } catch (Exception e) {
             log.warn("일어 인덱스 빌드/저장 실패: {}", e.getMessage());
+        } finally {
+            indexBuilding.set(false);
         }
     }
 
@@ -333,7 +360,9 @@ public class PokemonSpeciesService {
      * 처음 빌드는 수십 초 걸릴 수 있어 백그라운드 + null-safe 사용. 인덱스 없는 동안 일어 입력은 미해결.
      */
     private synchronized Map<String, String> buildJaIndex() {
-        if (jaToSlug != null) return jaToSlug;
+        // jaToSlug 가 빈 맵으로 초기화되어 있으므로 null 체크만으론 항상 통과되어 빌드 자체가 건너뛰어진다.
+        // 빈 맵이면 빌드 진행, 이미 채워져 있으면(=다른 스레드가 빌드 완료) 그대로 재사용.
+        if (jaToSlug != null && !jaToSlug.isEmpty()) return jaToSlug;
         log.info("PokéAPI 일어 인덱스 빌드 시작 (수십 초 소요).");
         Map<String, String> idx = new ConcurrentHashMap<>();
         try {
@@ -351,10 +380,14 @@ public class PokemonSpeciesService {
                     String nameJa = pickLocalizedName(species.path("names"), "ja-Hrkt");
                     if (!nameJa.isEmpty()) {
                         idx.put(nameJa, slug);
+                        // 한글 음역 변형도 등록 → 일본판 게임 화면(ガブリアス) 보고 "가부리아스"/"가브리아스" 같이
+                        // 한글로 음역해서 입력해도 자동완성에 잡힘.
+                        registerHangulVariants(idx, nameJa, slug);
                     }
                     String nameJaPlain = pickLocalizedName(species.path("names"), "ja");
                     if (!nameJaPlain.isEmpty()) {
                         idx.put(nameJaPlain, slug);
+                        registerHangulVariants(idx, nameJaPlain, slug);
                     }
                     String nameKo = pickLocalizedName(species.path("names"), "ko");
                     if (!nameKo.isEmpty()) {
@@ -652,5 +685,138 @@ public class PokemonSpeciesService {
     private static String capitalize(String s) {
         if (s == null || s.isEmpty()) return s;
         return Character.toUpperCase(s.charAt(0)) + s.substring(1);
+    }
+
+    // ---------- 카타카나 → 한글 음역 (자동완성 보강) ----------
+    //
+    // 일본판 게임 화면에서 ガブリアス를 보고 한국 정식명("한카리아스")을 모를 때,
+    // 한글로 음역해서 ("가부리아스" 또는 "가브리아스") 입력해도 자동완성에 잡히게 한다.
+    //
+    // 알고리즘:
+    //  1. kanaToHangul: 카타카나를 한 음절씩 한글로 매핑 (요음 2글자 결합 우선, 장음 무시, ッ 무시, ン → ㄴ 받침).
+    //  2. compressU: 직음역에서 ㅜ 음절 다음에 음절이 오면 ㅡ로 압축 ("가부리아스" → "가브리아스").
+    //  3. 두 변형 모두 인덱스에 등록.
+
+    private static final Map<String, String> KANA_HANGUL = buildKanaTable();
+    private static final Map<String, String> YOON = buildYoonTable();
+
+    private static Map<String, String> buildKanaTable() {
+        Map<String, String> m = new HashMap<>();
+        // 청음
+        String[][] base = {
+            {"ア","아"},{"イ","이"},{"ウ","우"},{"エ","에"},{"オ","오"},
+            {"カ","카"},{"キ","키"},{"ク","쿠"},{"ケ","케"},{"コ","코"},
+            {"サ","사"},{"シ","시"},{"ス","스"},{"セ","세"},{"ソ","소"},
+            {"タ","타"},{"チ","치"},{"ツ","츠"},{"テ","테"},{"ト","토"},
+            {"ナ","나"},{"ニ","니"},{"ヌ","누"},{"ネ","네"},{"ノ","노"},
+            {"ハ","하"},{"ヒ","히"},{"フ","후"},{"ヘ","헤"},{"ホ","호"},
+            {"マ","마"},{"ミ","미"},{"ム","무"},{"メ","메"},{"モ","모"},
+            {"ヤ","야"},{"ユ","유"},{"ヨ","요"},
+            {"ラ","라"},{"リ","리"},{"ル","루"},{"レ","레"},{"ロ","로"},
+            {"ワ","와"},{"ヲ","오"},{"ン","ㄴ"},
+            // 탁음
+            {"ガ","가"},{"ギ","기"},{"グ","구"},{"ゲ","게"},{"ゴ","고"},
+            {"ザ","자"},{"ジ","지"},{"ズ","즈"},{"ゼ","제"},{"ゾ","조"},
+            {"ダ","다"},{"ヂ","지"},{"ヅ","즈"},{"デ","데"},{"ド","도"},
+            {"バ","바"},{"ビ","비"},{"ブ","부"},{"ベ","베"},{"ボ","보"},
+            // 반탁음
+            {"パ","파"},{"ピ","피"},{"プ","푸"},{"ペ","페"},{"ポ","포"},
+        };
+        for (String[] kv : base) m.put(kv[0], kv[1]);
+        return Map.copyOf(m);
+    }
+
+    private static Map<String, String> buildYoonTable() {
+        Map<String, String> m = new HashMap<>();
+        String[][] base = {
+            {"キャ","캬"},{"キュ","큐"},{"キョ","쿄"},
+            {"ギャ","갸"},{"ギュ","규"},{"ギョ","교"},
+            {"シャ","샤"},{"シュ","슈"},{"ショ","쇼"},
+            {"ジャ","자"},{"ジュ","주"},{"ジョ","조"},
+            {"チャ","차"},{"チュ","추"},{"チョ","초"},
+            {"ニャ","냐"},{"ニュ","뉴"},{"ニョ","뇨"},
+            {"ヒャ","햐"},{"ヒュ","휴"},{"ヒョ","효"},
+            {"ビャ","뱌"},{"ビュ","뷰"},{"ビョ","뵤"},
+            {"ピャ","퍄"},{"ピュ","퓨"},{"ピョ","표"},
+            {"ミャ","먀"},{"ミュ","뮤"},{"ミョ","묘"},
+            {"リャ","랴"},{"リュ","류"},{"リョ","료"},
+        };
+        for (String[] kv : base) m.put(kv[0], kv[1]);
+        return Map.copyOf(m);
+    }
+
+    /** 카타카나 → 한글 직음역. 장음(ー)/촉음(ッ)은 무시, ン은 직전 음절의 ㄴ 받침으로 결합. */
+    static String kanaToHangul(String kana) {
+        if (kana == null || kana.isEmpty()) return "";
+        StringBuilder raw = new StringBuilder();
+        int i = 0, n = kana.length();
+        while (i < n) {
+            char c = kana.charAt(i);
+            if (c == 'ー') { i++; continue; }            // 장음 무시
+            if (c == 'ッ') { i++; continue; }            // 촉음은 단순화 위해 무시
+            // 요음 2글자 결합 우선 시도
+            if (i + 1 < n) {
+                String two = kana.substring(i, i + 2);
+                String mappedTwo = YOON.get(two);
+                if (mappedTwo != null) { raw.append(mappedTwo); i += 2; continue; }
+            }
+            String one = String.valueOf(c);
+            String mappedOne = KANA_HANGUL.get(one);
+            if (mappedOne != null) raw.append(mappedOne);
+            // 매핑에 없는 문자(중점, 영문 등)는 건너뜀
+            i++;
+        }
+        return joinFinalN(raw.toString());
+    }
+
+    /** "ㄴ" 토큰을 직전 한글 음절의 종성으로 결합. "고ㄴ" → "곤". */
+    private static String joinFinalN(String s) {
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == 'ㄴ' && out.length() > 0) {
+                char prev = out.charAt(out.length() - 1);
+                int code = prev - 0xAC00;
+                // 받침 없는 한글 음절 (code 범위 내 + 종성 = 0)
+                if (code >= 0 && code < 11172 && code % 28 == 0) {
+                    out.setCharAt(out.length() - 1, (char) (prev + 4 /* ㄴ 종성 인덱스 */));
+                    continue;
+                }
+            }
+            out.append(c);
+        }
+        return out.toString();
+    }
+
+    /** ㅜ 음절 다음에 한글 음절이 오면 ㅜ → ㅡ 로 압축. "가부리아스" → "가브리아스". */
+    static String compressU(String s) {
+        if (s == null || s.length() < 2) return s;
+        char[] arr = s.toCharArray();
+        for (int i = 0; i < arr.length - 1; i++) {
+            if (!isHangulSyllable(arr[i]) || !isHangulSyllable(arr[i + 1])) continue;
+            int code = arr[i] - 0xAC00;
+            int jong = code % 28;
+            int jung = (code / 28) % 21;
+            if (jong == 0 && jung == 13 /* ㅜ */) {
+                int cho = code / (28 * 21);
+                arr[i] = (char) (0xAC00 + cho * 28 * 21 + 18 /* ㅡ */ * 28);
+            }
+        }
+        return new String(arr);
+    }
+
+    private static boolean isHangulSyllable(char c) {
+        return c >= 0xAC00 && c <= 0xD7A3;
+    }
+
+    /** nameJa 1개에서 한글 직음역 + 압축형 두 변형을 인덱스에 등록. 중복은 ConcurrentHashMap이 자동 처리. */
+    private static void registerHangulVariants(Map<String, String> idx, String kana, String slug) {
+        String direct = kanaToHangul(kana);
+        if (direct.isEmpty() || direct.equals(kana)) return;
+        idx.put(direct, slug);
+        String compressed = compressU(direct);
+        if (!compressed.equals(direct)) {
+            idx.put(compressed, slug);
+        }
     }
 }
