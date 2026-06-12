@@ -22,6 +22,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -126,6 +127,13 @@ public class ClaudeCliService implements LlmProvider {
      */
     private String resolvedExecutable;
 
+    /**
+     * 인증 풀림 감지 시 사용자에게 새 콘솔을 띄워 인터랙티브 로그인을 시켰는지 여부.
+     * 한 번 띄우면 봇 세션 동안 다시 안 띄움 — 연속 호출 실패마다 콘솔 창 폭주 방지.
+     * 봇 재시작 또는 첫 성공 호출에서 reset.
+     */
+    private final AtomicBoolean interactiveLoginShown = new AtomicBoolean(false);
+
     @PostConstruct
     public void init() {
         BotProperties.ClaudeCli cfg = properties.getClaudeCli();
@@ -188,12 +196,10 @@ public class ClaudeCliService implements LlmProvider {
         String os = System.getProperty("os.name", "").toLowerCase();
         if (!os.contains("win")) return List.of();
         List<String> candidates = new ArrayList<>();
-        String appdata = System.getenv("APPDATA");
-        if (appdata != null && !appdata.isBlank()) {
-            candidates.add(appdata + File.separator + "Claude" + File.separator + "claude-code");
-        }
-        // MSIX 패키지 redirect 실 경로. %APPDATA% 경로는 PowerShell엔 보여도 Java NIO에선
-        // 가상화 우회로 false 나오는 경우가 있어 실제 경로도 후보에 추가.
+        // MSIX 실 경로(%LOCALAPPDATA%\Packages\Claude_*\...)를 가상 경로보다 먼저.
+        // 둘 다 ProcessBuilder 로는 실행되지만, 에러 메시지에 가상 경로가 박히면 사용자가
+        // PowerShell에서 그대로 복붙했을 때 CommandNotFoundException(MSIX redirect)으로 실패함.
+        // 자동 탐색이 실 경로를 잡아야 안내 메시지가 PowerShell 에서도 그대로 실행 가능.
         String localAppData = System.getenv("LOCALAPPDATA");
         if (localAppData != null && !localAppData.isBlank()) {
             Path packagesDir = Paths.get(localAppData, "Packages");
@@ -212,7 +218,85 @@ public class ClaudeCliService implements LlmProvider {
                 }
             }
         }
+        // %APPDATA% 가상 경로 — MSIX 패키지가 아닌 네이티브 설치 본 케이스 대응 fallback.
+        String appdata = System.getenv("APPDATA");
+        if (appdata != null && !appdata.isBlank()) {
+            candidates.add(appdata + File.separator + "Claude" + File.separator + "claude-code");
+        }
         return candidates;
+    }
+
+    /**
+     * 사용자가 PowerShell 에 그대로 복붙해 실행할 수 있는 경로 산출.
+     * {@link #resolvedExecutable} 이 MSIX 가상 경로(`%APPDATA%\Claude\...`)면
+     * PowerShell `&` 호출이 CommandNotFoundException 으로 거부한다. 실 경로
+     * (`%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\claude-code\...`)로
+     * 변환 시도하고, 변환 불가하거나 이미 실 경로면 그대로 반환.
+     * 인증 에러 안내 메시지에서만 사용 — ProcessBuilder 호출엔 영향 없음.
+     */
+    private String userFacingExecutable() {
+        String exec = resolvedExecutable;
+        if (exec == null || exec.isBlank()) return exec;
+        String appdata = System.getenv("APPDATA");
+        if (appdata == null || appdata.isBlank()) return exec;
+        String virtualPrefix = appdata + File.separator + "Claude" + File.separator + "claude-code";
+        if (!exec.startsWith(virtualPrefix)) return exec; // 이미 실 경로거나 사용자 지정 경로
+        String tail = exec.substring(virtualPrefix.length()); // \2.1.165\claude.exe
+        String localAppData = System.getenv("LOCALAPPDATA");
+        if (localAppData == null || localAppData.isBlank()) return exec;
+        Path packagesDir = Paths.get(localAppData, "Packages");
+        if (!Files.isDirectory(packagesDir)) return exec;
+        try (Stream<Path> stream = Files.list(packagesDir)) {
+            return stream.filter(Files::isDirectory)
+                    .filter(p -> p.getFileName().toString().startsWith("Claude_"))
+                    .map(p -> p.resolve("LocalCache").resolve("Roaming").resolve("Claude").resolve("claude-code"))
+                    .filter(Files::isDirectory)
+                    .map(claudeCodeDir -> {
+                        // 1순위: 가상 경로와 동일 버전 (MSIX redirect 라 보통 일치)
+                        Path sameVersion = Paths.get(claudeCodeDir.toString() + tail);
+                        if (Files.isRegularFile(sameVersion)) return sameVersion.toString();
+                        // 2순위: 실 경로 디렉토리에서 latest claude.exe 재탐색
+                        Path latest = findLatestClaude(claudeCodeDir);
+                        return latest == null ? null : latest.toString();
+                    })
+                    .filter(s -> s != null)
+                    .findFirst()
+                    .orElse(exec);
+        } catch (IOException e) {
+            return exec;
+        }
+    }
+
+    /**
+     * 인증 풀림 감지 시 사용자에게 새 콘솔 창을 띄워 인터랙티브 로그인 모드 실행.
+     * 배포판 사용자는 봇 콘솔 로그를 안 보기 때문에, "갑자기 봇이 안 응답"하는 상황에서
+     * 새 창이 자동으로 떠야 인지/조치가 가능. cmd /c start 로 분리 창 spawn → 봇 종료해도
+     * 살아있음. 사용자는 그 창에서 미인증 시 자동으로 뜨는 브라우저 인증을 완료하면 끝.
+     *
+     * 한 번 띄우면 {@link #interactiveLoginShown} 으로 중복 차단 (연속 실패 호출마다
+     * 창 폭주 방지). 봇 재시작 또는 다음 성공 호출에서 reset.
+     */
+    private void tryOpenInteractiveLogin() {
+        if (!interactiveLoginShown.compareAndSet(false, true)) return;
+        String os = System.getProperty("os.name", "").toLowerCase();
+        String exec = userFacingExecutable();
+        if (!os.contains("win")) {
+            log.error("로그인 콘솔 자동 띄우기는 Windows 전용. 수동으로 실행해주세요: {}", exec);
+            return;
+        }
+        try {
+            // cmd /c start "<title>" cmd /k "<claude.exe>"
+            //  - start: 봇 프로세스에서 분리된 새 콘솔 윈도우 spawn
+            //  - 첫 "" 인자: start 가 그걸 타이틀로 인식 (없으면 다음 인자가 타이틀로 먹힘)
+            //  - cmd /k: claude.exe 종료 후에도 콘솔 유지 → 사용자가 메시지 확인 가능
+            new ProcessBuilder("cmd", "/c", "start", "Claude Code 로그인 필요", "cmd", "/k", exec)
+                    .inheritIO()
+                    .start();
+            log.error("Claude CLI 인증이 풀려 새 콘솔 창에 로그인 모드를 띄웠습니다. "
+                    + "그 창에서 인증을 완료하면 봇이 자동 복구됩니다. exec={}", exec);
+        } catch (IOException e) {
+            log.error("로그인 콘솔 자동 띄우기 실패. 수동으로 실행해주세요: {}", exec, e);
+        }
     }
 
     /**
@@ -634,11 +718,29 @@ public class ClaudeCliService implements LlmProvider {
                 exit, elapsed, out.length(), err.length());
 
         if (exit != 0) {
-            throw new RuntimeException("Claude CLI exit=" + exit + " stderr=" + err);
+            // Claude Code CLI 는 인증 에러("Not logged in · Please run /login")를 stderr 가 아닌
+            // stdout 에 적고 exit=1 로 종료한다. stderr 만 보면 빈 문자열이라 원인을 못 잡으므로
+            // 둘 다 합쳐서 인증 에러 패턴을 우선 감지하고, 일반 에러는 stdout/stderr 를 같이 노출.
+            String stdoutStr = out.toString().trim();
+            String stderrStr = err.toString().trim();
+            String combined = (stdoutStr + " " + stderrStr).toLowerCase();
+            if (combined.contains("not logged in") || combined.contains("please run /login")) {
+                // 배포판 사용자(콘솔 로그 안 보는 케이스) 대응: 봇이 직접 새 콘솔 창을 띄워
+                // 인터랙티브 로그인 모드를 시작. 사용자는 그 창에서 자동으로 뜨는 브라우저 인증만
+                // 끝내면 됨 → 봇은 다음 호출부터 자동 복구.
+                tryOpenInteractiveLogin();
+                throw new RuntimeException(
+                        "Claude CLI 로그인 세션이 풀렸습니다. 새 콘솔 창에 로그인 모드를 띄웠으니 "
+                                + "그 창에서 인증을 완료해주세요. (창이 안 떴다면 수동: & \""
+                                + userFacingExecutable() + "\")");
+            }
+            throw new RuntimeException("Claude CLI exit=" + exit + " stdout=" + stdoutStr + " stderr=" + stderrStr);
         }
         if (err.length() > 0) {
             log.debug("Claude CLI stderr: {}", err);
         }
+        // 성공 호출 = 로그인 살아있음. 다음에 또 풀리면 새 콘솔 띄울 수 있도록 latch reset.
+        interactiveLoginShown.set(false);
         return out.toString();
     }
 
