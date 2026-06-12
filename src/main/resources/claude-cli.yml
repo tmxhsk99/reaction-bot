@@ -34,7 +34,7 @@ reaction-bot:
     #   claude-haiku-4-5-20251001  ← 가장 빠르고 한도 적게 먹음
     #   claude-sonnet-4-6          ← 더 풍부한 반응
     #   claude-opus-4-7            ← 가장 풍부/정교한 반응, 구독 한도·레이턴시 가장 크게 소모 (현재 설정값)
-    model: "claude-opus-4-7"
+    model: "claude-opus-4-8"
 
     # CLI 응답 최대 대기 시간(초). 콜드 스타트 + 추론 포함.
     # 첫 호출은 느릴 수 있어 여유 둠.
