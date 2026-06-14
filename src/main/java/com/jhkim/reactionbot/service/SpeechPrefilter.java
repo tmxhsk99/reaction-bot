@@ -122,8 +122,12 @@ public class SpeechPrefilter {
     }
 
     /**
-     * 텍스트가 동일한 짧은 substring(1~4글자)의 반복으로 거의 채워져 있으면 true.
-     * Whisper는 짧은 노이즈에 대해 같은 토큰을 2~5회 반복해서 뱉는 경향이 있음.
+     * 텍스트 안에 동일한 짧은 substring(1~4글자)의 반복 구간이 있고, 그 구간이 전체의
+     * 상당 부분을 차지하면 true. Whisper는 짧은 노이즈에 대해 같은 토큰을 2~5회
+     * 반복해서 뱉는 경향이 있음.
+     *
+     * 주의: STT가 반복 앞뒤에 추임새("음 루기아 루기아", "루기아 루기아 어")를 끼워 넣는
+     * 경우가 흔하므로, 반드시 0번 오프셋에서 시작하지 않더라도 잡아낸다.
      */
     private boolean isRepetitionHallucination(String text) {
         // 공백/구두점/말줄임표 제거 후 순수 문자열로 판정
@@ -132,15 +136,20 @@ public class SpeechPrefilter {
 
         int maxUnitLen = Math.min(4, cleaned.length() / 2);
         for (int unitLen = 1; unitLen <= maxUnitLen; unitLen++) {
-            String unit = cleaned.substring(0, unitLen);
-            int matches = 0;
-            for (int i = 0; i + unitLen <= cleaned.length(); i += unitLen) {
-                if (cleaned.startsWith(unit, i)) matches++;
-                else break;
-            }
-            // 같은 unit이 2번 이상 연속 + 전체의 70% 이상을 커버하면 hallucination 판정
-            if (matches >= 2 && matches * unitLen * 100 / cleaned.length() >= 70) {
-                return true;
+            // unit 시작 오프셋을 슬라이딩. 0뿐 아니라 중간 어디서 반복이 시작돼도 잡는다.
+            for (int off = 0; off + unitLen * 2 <= cleaned.length(); off++) {
+                String unit = cleaned.substring(off, off + unitLen);
+                int reps = 1;
+                int pos = off + unitLen;
+                while (pos + unitLen <= cleaned.length() && cleaned.startsWith(unit, pos)) {
+                    reps++;
+                    pos += unitLen;
+                }
+                // 같은 unit이 2번 이상 연속 + 반복 구간이 전체의 60% 이상이면 hallucination 판정.
+                // 앞뒤 추임새 한두 글자는 허용해야 해서 70% → 60%로 완화.
+                if (reps >= 2 && reps * unitLen * 100 / cleaned.length() >= 60) {
+                    return true;
+                }
             }
         }
         return false;

@@ -164,5 +164,9 @@ reaction-bot:
       ignore-region: ""
 
 logging:
+  file:
+    # logs/reaction-bot.log 에 적재. Spring Boot 기본 로테이션 (10MB×7개 유지) 자동.
+    # 발화 인입/필터 컷/PASS 등 추적용. 문제 재현되면 이 파일 확인.
+    name: logs/reaction-bot.log
   level:
     com.jhkim.reactionbot: DEBUG
