@@ -1,0 +1,31 @@
+# LLM 출력 비속어 마스킹 사전.
+#
+# - 이 파일은 classpath 디폴트. jar 안에 묶임.
+# - 런타임 오버라이드는 cwd 의 `./profanity-mappings.yml`. 그 파일이 있으면 그게 단독 source.
+#   (디폴트와 머지하지 않음. /config UI 에서 한 번이라도 저장하면 전체 사전이 cwd 파일에 dump 됨.)
+# - 적용 토글(enabled/mode/whole-word)은 application.yml 의 reaction-bot.speech.profanity-filter 참조.
+#
+# 형식:
+#   mappings        : key=금지어, value=대체어. 대소문자 무시. 부분 매칭(예: "존나게"의 "존나"도 매칭).
+#   forbid-patterns : 매핑에 없지만 차단할 정규식. mode=mask 여도 매칭 시 PASS.
+
+mappings:
+  존나: 진짜
+  졸라: 진짜
+  씨발: 아
+  시발: 아
+  ㅅㅂ: 아
+  ㅆㅂ: 아
+  병신: 바보
+  ㅂㅅ: 바보
+  지랄: 난리
+  ㅈㄹ: 난리
+  박는다: 부딪힌다
+  박아버린다: 부딪힌다
+  쳐맞: 맞
+  좆같: 별로
+  ㅈ같: 별로
+  fuck: wow
+  shit: oh
+
+forbid-patterns: []

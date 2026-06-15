@@ -270,6 +270,29 @@ public class BotProperties {
         // true면 봇 이름 호명("리봇아!") 발화에만 응답. 일반 잡담엔 LLM 호출도 안 함 → 완전 수동 모드.
         // false면 모든 발화를 LLM이 보고 PASS/SPEAK 판단 (기본 동작).
         private boolean respondOnlyWhenAddressed = false;
+        // TTS 직전에 LLM 응답 텍스트의 비속어를 마스킹/PASS 처리. 시스템 프롬프트의 욕설 금지가
+        // 지켜지지 않을 때의 안전망. 비활성화 시 LLM 응답이 그대로 흘러감.
+        private ProfanityFilter profanityFilter = new ProfanityFilter();
+    }
+
+    /**
+     * LLM 출력 비속어 필터 토글. application.yml 의 speech.profanity-filter 와 매핑.
+     *
+     *  - mode=mask : 매핑된 단어는 치환해서 발화. forbid-patterns 매칭은 PASS.
+     *  - mode=pass : 매핑/패턴 어느 하나라도 걸리면 무조건 PASS.
+     *
+     * 실제 매핑 사전(단어 ↔ 대체어, forbid 패턴)은 별도 파일로 관리:
+     *  - classpath:profanity-mappings.yml (디폴트, jar 안)
+     *  - cwd ./profanity-mappings.yml 또는 mappings-file 경로 (있으면 단독 source).
+     *  - /config UI 에서 편집 시 cwd 파일에 dump.
+     */
+    @Getter @Setter
+    public static class ProfanityFilter {
+        private boolean enabled = false;
+        private String mode = "mask";        // "mask" | "pass"
+        private boolean wholeWord = false;
+        // 사용자 매핑 파일 경로. 빈 값이면 cwd "./profanity-mappings.yml" 사용.
+        private String mappingsFile = "";
     }
 
     @Getter @Setter

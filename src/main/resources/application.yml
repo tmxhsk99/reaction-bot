@@ -125,6 +125,23 @@ reaction-bot:
       - "^[ㄱ-ㅎㅏ-ㅣ\\s.?!~]+$"                          # 자음/모음 단독 ("ㅋ", "ㄴ", "ㅇㅇ", "ㅎ ㅎ" 등 STT가 버튼소리에 뱉는 자모)
       - "^.{1,2}[.?!~…]*$"                                # 1~2글자 단발 (min-text-length로 대부분 컷되지만 안전망)
 
+    # LLM 출력 비속어 필터 — TTS 직전에 LlmOutputFilter가 적용. 시스템 프롬프트의 욕설 금지가
+    # 지켜지지 않는 경우의 안전망. 입력(STT) 쪽 filler-patterns 와는 무관.
+    # 매핑 사전은 별도 파일로 분리 (classpath:profanity-mappings.yml, /config UI로 편집 시 cwd 오버라이드).
+    profanity-filter:
+      # 필터 활성 여부. false면 LLM 응답이 그대로 TTS로 흘러감.
+      enabled: true
+      # "mask" : 매핑 사전(mappings)에 정의된 단어는 치환해서 그대로 발화. 매핑에 없는데
+      #          forbid-patterns에만 걸린 경우엔 PASS 처리(=발화 안 함).
+      # "pass" : 금지어/패턴 중 하나라도 걸리면 무조건 PASS. 마스킹 없이 전부 컷.
+      mode: "mask"
+      # true면 한글 1글자 매핑(예: "개", "좆")은 앞뒤가 한글일 때만 매칭 (false-positive 감소).
+      whole-word: false
+      # 사용자 오버라이드 매핑 파일 경로. 비어있으면 cwd 의 "./profanity-mappings.yml" 사용.
+      # 이 파일이 존재하면 classpath 디폴트를 무시하고 단독 source 가 됨.
+      # /config UI 에서 매핑을 저장하면 이 파일에 dump 됨.
+      mappings-file: ""
+
   # 능동 발문 - 정적 시간이 길면 봇이 가끔 먼저 말 걸기. 2단계 ramping.
   #  LIGHT : 유저가 light-threshold-ms 이상 조용 → 가벼운 한 마디 ("뭐 해?", "지루해~")
   #  TOPIC : 유저가 topic-threshold-ms 이상 조용 → 화면 보고 새 화제 던지기

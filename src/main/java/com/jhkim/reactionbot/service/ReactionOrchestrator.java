@@ -28,6 +28,7 @@ public class ReactionOrchestrator {
     private final ScreenCaptureService screenCaptureService;
     private final AvatarEventService avatarEvents;
     private final SpeechPrefilter prefilter;
+    private final LlmOutputFilter outputFilter;
     private final BotProperties properties;
     private final CharacterConfig character;
 
@@ -150,13 +151,18 @@ public class ReactionOrchestrator {
                 return new ReactionOutcome(Result.PASS, null);
             }
 
+            String spokenText = applyOutputFilter(botText);
+            if (spokenText == null) {
+                return new ReactionOutcome(Result.FILTERED, null);
+            }
+
             safeAvatarEvent(true);
             try {
-                ttsService.speak(botText);
+                ttsService.speak(spokenText);
             } finally {
                 safeAvatarEvent(false);
             }
-            return new ReactionOutcome(Result.SPOKE, botText);
+            return new ReactionOutcome(Result.SPOKE, spokenText);
 
         } catch (Exception e) {
             log.error("발화 처리 중 오류", e);
@@ -231,14 +237,20 @@ public class ReactionOrchestrator {
                 return new ReactionOutcome(Result.PASS, null);
             }
 
+            String spokenText = applyOutputFilter(botText);
+            if (spokenText == null) {
+                log.info("Idle trigger 출력 필터 컷 ({})", effectiveStage);
+                return new ReactionOutcome(Result.FILTERED, null);
+            }
+
             safeAvatarEvent(true);
             try {
-                ttsService.speak(botText);
+                ttsService.speak(spokenText);
             } finally {
                 safeAvatarEvent(false);
             }
-            log.info("Idle trigger 발화 ({}): {}", effectiveStage, botText);
-            return new ReactionOutcome(Result.SPOKE, botText);
+            log.info("Idle trigger 발화 ({}): {}", effectiveStage, spokenText);
+            return new ReactionOutcome(Result.SPOKE, spokenText);
 
         } catch (Exception e) {
             log.error("Idle trigger 처리 중 오류 ({})", stage, e);
@@ -246,6 +258,25 @@ public class ReactionOrchestrator {
         } finally {
             spokeEndedAt.set(Instant.now());
             speaking.set(false);
+        }
+    }
+
+    /**
+     * LLM 응답에 비속어 필터 적용. PASS면 null 리턴 → 호출 측에서 발화 차단.
+     * MASKED/UNCHANGED면 (마스킹된) 텍스트 리턴.
+     */
+    private String applyOutputFilter(String botText) {
+        LlmOutputFilter.Result r = outputFilter.apply(botText);
+        switch (r.action()) {
+            case PASS:
+                log.warn("출력 필터 컷 (비속어): hit='{}', 원문='{}'", r.hit(), botText);
+                return null;
+            case MASKED:
+                log.info("출력 필터 마스킹: hit='{}', 원문='{}', 치환='{}'", r.hit(), botText, r.text());
+                return r.text();
+            case UNCHANGED:
+            default:
+                return r.text();
         }
     }
 
