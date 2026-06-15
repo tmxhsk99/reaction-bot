@@ -264,20 +264,32 @@ public class ReactionOrchestrator {
     /**
      * LLM 응답에 비속어 필터 적용. PASS면 null 리턴 → 호출 측에서 발화 차단.
      * MASKED/UNCHANGED면 (마스킹된) 텍스트 리턴.
+     *
+     * 로그에 원문 전체를 남기지 않음: PASS 시 비속어가 그대로 디스크 로그에 적재되는 걸 막기 위함.
+     * 진단 필요 시 truncated 미리보기 + hit 메타로 충분. 전체 텍스트는 DEBUG 에서만.
      */
     private String applyOutputFilter(String botText) {
         LlmOutputFilter.Result r = outputFilter.apply(botText);
         switch (r.action()) {
             case PASS:
-                log.warn("출력 필터 컷 (비속어): hit='{}', 원문='{}'", r.hit(), botText);
+                log.warn("출력 필터 컷 (비속어): hit='{}', 미리보기='{}'", r.hit(), preview(botText));
+                log.debug("출력 필터 컷 원문: {}", botText);
                 return null;
             case MASKED:
-                log.info("출력 필터 마스킹: hit='{}', 원문='{}', 치환='{}'", r.hit(), botText, r.text());
+                log.info("출력 필터 마스킹: hit='{}'", r.hit());
+                log.debug("출력 필터 마스킹 원문='{}', 치환='{}'", botText, r.text());
                 return r.text();
             case UNCHANGED:
             default:
                 return r.text();
         }
+    }
+
+    /** 로그용 짧은 미리보기 — 비속어/민감 정보가 디스크 로그에 그대로 남지 않게 앞부분만 잘라냄. */
+    private static String preview(String s) {
+        if (s == null) return "";
+        String oneLine = s.replace('\n', ' ').replace('\r', ' ');
+        return oneLine.length() <= 24 ? oneLine : oneLine.substring(0, 24) + "…";
     }
 
     /** SSE 이벤트 발행은 부가 기능이므로 어떤 예외도 메인 흐름을 깨지 못하게 격리. */

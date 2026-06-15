@@ -45,6 +45,10 @@ public class LlmOutputFilter {
 
     private static final String CLASSPATH_DEFAULT = "profanity-mappings.yml";
     private static final String DEFAULT_USER_FILE = "./profanity-mappings.yml";
+    // forbid-patterns 안전 가드: 입력자가 운영자 본인이라도 catastrophic regex 가
+    // TTS 스레드를 막지 못하게 개수·길이 상한을 둠.
+    private static final int MAX_FORBID_PATTERNS = 100;
+    private static final int MAX_PATTERN_LENGTH = 1000;
 
     private final BotProperties properties;
 
@@ -85,6 +89,10 @@ public class LlmOutputFilter {
         root.put("forbid-patterns", forbidPatterns == null ? new ArrayList<>() : new ArrayList<>(forbidPatterns));
 
         Path file = userMappingFile();
+        Path parent = file.getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
         DumperOptions opt = new DumperOptions();
         opt.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
         opt.setPrettyFlow(true);
@@ -167,10 +175,21 @@ public class LlmOutputFilter {
             compiled.add(new Mapping(key, val, buildMatchPattern(key, wholeWord)));
         }
         List<Pattern> forbid = new ArrayList<>();
+        int accepted = 0;
         for (String raw0 : raw.forbidPatterns) {
             if (raw0 == null || raw0.isBlank()) continue;
+            if (accepted >= MAX_FORBID_PATTERNS) {
+                log.warn("forbid-patterns 개수 한도({}) 초과 — 나머지 스킵", MAX_FORBID_PATTERNS);
+                break;
+            }
+            if (raw0.length() > MAX_PATTERN_LENGTH) {
+                log.warn("forbid-patterns 길이 한도({}) 초과 — 스킵: '{}...'",
+                        MAX_PATTERN_LENGTH, raw0.substring(0, Math.min(40, raw0.length())));
+                continue;
+            }
             try {
                 forbid.add(Pattern.compile(raw0, Pattern.CASE_INSENSITIVE));
+                accepted++;
             } catch (Exception ex) {
                 log.warn("forbid-patterns 컴파일 실패 — 스킵: '{}': {}", raw0, ex.getMessage());
             }
