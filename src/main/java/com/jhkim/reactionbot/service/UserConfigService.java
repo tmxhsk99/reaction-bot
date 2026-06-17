@@ -54,6 +54,8 @@ public class UserConfigService {
             "reaction-bot.screen.obs.password",
             "reaction-bot.idle-trigger.enabled",
             "reaction-bot.speech.respond-only-when-addressed",
+            "reaction-bot.speech.profanity-filter.enabled",
+            "reaction-bot.speech.profanity-filter.mode",
             "reaction-bot.stt.auto-start",
             "reaction-bot.pokemon.enabled",
             "reaction-bot.pokemon.overlay.enabled",
@@ -110,6 +112,8 @@ public class UserConfigService {
         out.put("reaction-bot.screen.obs.password", maskSecret(safe(properties.getScreen().getObs().getPassword())));
         out.put("reaction-bot.idle-trigger.enabled", properties.getIdleTrigger().isEnabled());
         out.put("reaction-bot.speech.respond-only-when-addressed", properties.getSpeech().isRespondOnlyWhenAddressed());
+        out.put("reaction-bot.speech.profanity-filter.enabled", properties.getSpeech().getProfanityFilter().isEnabled());
+        out.put("reaction-bot.speech.profanity-filter.mode", safe(properties.getSpeech().getProfanityFilter().getMode()));
         out.put("reaction-bot.stt.auto-start", properties.getStt().isAutoStart());
         out.put("reaction-bot.pokemon.enabled", properties.getPokemon().isEnabled());
         out.put("reaction-bot.pokemon.overlay.enabled", properties.getPokemon().getOverlay().isEnabled());
