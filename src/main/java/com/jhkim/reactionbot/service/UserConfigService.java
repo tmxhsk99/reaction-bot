@@ -74,7 +74,12 @@ public class UserConfigService {
             "reaction-bot.character.custom-rules",
             "reaction-bot.claude-cli.executable",
             "reaction-bot.claude-cli.executable-search-dir",
-            "reaction-bot.codex-cli.executable",
+            "reaction-bot.codex-cli.executable"
+    );
+
+    // 빈 값으로 보내면 "변경 안 함"이 아니라 키 자체를 지워서 null/기본값으로 되돌리는 키.
+    // (device-index는 nullable Integer라 "" 그대로 저장하면 바인딩이 깨지므로 키를 제거)
+    private static final List<String> NULL_ON_EMPTY_KEYS = List.of(
             "reaction-bot.stt.device-index"
     );
 
@@ -142,8 +147,14 @@ public class UserConfigService {
             if (value instanceof String s) {
                 // 마스킹된 그대로 들어온 경우 → 변경 의도 아님
                 if (s.matches("^\\*{2,}.*")) continue;
-                // 일반 키는 빈 값=변경 안 함. ALLOW_EMPTY_KEYS만 빈 값 저장 허용(텍스트영역 지우기).
-                if (s.isEmpty() && !ALLOW_EMPTY_KEYS.contains(key)) continue;
+                if (s.isEmpty()) {
+                    if (NULL_ON_EMPTY_KEYS.contains(key)) {
+                        removeNested(existing, key);
+                        continue;
+                    }
+                    // 일반 키는 빈 값=변경 안 함. ALLOW_EMPTY_KEYS만 빈 값 저장 허용(텍스트영역 지우기).
+                    if (!ALLOW_EMPTY_KEYS.contains(key)) continue;
+                }
             }
             setNested(existing, key, value);
         }
@@ -204,5 +215,17 @@ public class UserConfigService {
             cur = (Map<String, Object>) next;
         }
         cur.put(parts[parts.length - 1], value);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void removeNested(Map<String, Object> root, String dottedKey) {
+        String[] parts = dottedKey.split("\\.");
+        Map<String, Object> cur = root;
+        for (int i = 0; i < parts.length - 1; i++) {
+            Object next = cur.get(parts[i]);
+            if (!(next instanceof Map)) return;
+            cur = (Map<String, Object>) next;
+        }
+        cur.remove(parts[parts.length - 1]);
     }
 }

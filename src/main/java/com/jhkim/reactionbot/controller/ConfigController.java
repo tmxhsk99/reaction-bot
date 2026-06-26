@@ -67,6 +67,8 @@ public class ConfigController {
      * scripts/list_mic_devices.py를 띄워서 sounddevice 장치 목록을 JSON으로 받아온다.
      * 응답: { devices: [{index, name, channels, default}], current: 1|null }
      */
+    private static final long MIC_PROBE_TIMEOUT_SECONDS = 10;
+
     @GetMapping("/mic-devices")
     public Map<String, Object> getMicDevices() {
         List<Map<String, Object>> devices = new ArrayList<>();
@@ -75,17 +77,21 @@ public class ConfigController {
             ProcessBuilder pb = new ProcessBuilder(
                     stt.getPythonExecutable(), "scripts/list_mic_devices.py");
             pb.environment().put("PYTHONIOENCODING", "utf-8");
-            pb.redirectErrorStream(false);
+            pb.redirectErrorStream(true);
             Process p = pb.start();
-            String json;
+            String output;
             try (BufferedReader reader = new BufferedReader(
                     new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
-                json = reader.lines().reduce("", (a, b) -> a + b);
+                output = reader.lines().reduce("", (a, b) -> a + b);
             }
-            p.waitFor();
-            if (!json.isBlank()) {
-                List<Map<String, Object>> parsed = objectMapper.readValue(json, List.class);
-                devices = parsed;
+            boolean finished = p.waitFor(MIC_PROBE_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) {
+                p.destroyForcibly();
+                log.warn("마이크 장치 목록 조회 타임아웃 ({}초)", MIC_PROBE_TIMEOUT_SECONDS);
+            } else if (p.exitValue() != 0) {
+                log.warn("마이크 장치 목록 조회 실패 (exit={}): {}", p.exitValue(), output);
+            } else if (!output.isBlank()) {
+                devices = objectMapper.readValue(output, List.class);
             }
         } catch (Exception e) {
             log.warn("마이크 장치 목록 조회 실패: {}", e.getMessage());

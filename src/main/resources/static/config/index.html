@@ -476,9 +476,17 @@ async function loadMicDevices() {
       opt.textContent = '[' + d.index + '] ' + d.name + (d.default ? '  (현재 OS 기본)' : '');
       sel.appendChild(opt);
     }
-    sel.value = current;
-    if (sel.value !== current) sel.value = '';
     const curDevice = (data.devices || []).find(d => String(d.index) === current);
+    // 저장된 인덱스가 현재 목록에 없으면(장치 분리/이름 변경 등) 임의로 비움 처리하지 않고
+    // 그 값을 가리키는 임시 옵션을 만들어 유지한다. 그래야 무관한 설정 저장 시 device-index가
+    // 의도치 않게 지워지지 않는다. 사용자가 직접 다른 장치를 고르면 그때 바뀐다.
+    if (current !== '' && !curDevice) {
+      const missing = document.createElement('option');
+      missing.value = current;
+      missing.textContent = '[' + current + '] (목록에 없음 — 장치 분리됐을 수 있음, 저장된 값 유지)';
+      sel.appendChild(missing);
+    }
+    sel.value = current;
     if (current === '') {
       hint.textContent = '현재 설정값 없음 → OS 기본 장치를 사용 중. 게임 캡처카드 등이 기본으로 잡혀있으면 실제 마이크를 선택하세요.';
     } else {
