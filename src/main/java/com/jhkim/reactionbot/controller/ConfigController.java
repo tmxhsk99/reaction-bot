@@ -1,5 +1,7 @@
 package com.jhkim.reactionbot.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jhkim.reactionbot.config.BotProperties;
 import com.jhkim.reactionbot.service.LlmOutputFilter;
 import com.jhkim.reactionbot.service.UserConfigService;
 import lombok.RequiredArgsConstructor;
@@ -10,7 +12,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -24,6 +29,8 @@ public class ConfigController {
 
     private final UserConfigService userConfig;
     private final LlmOutputFilter outputFilter;
+    private final BotProperties properties;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** 현재 설정 (시크릿 마스킹). UI가 GET해서 화면에 채움. */
     @GetMapping
@@ -52,6 +59,46 @@ public class ConfigController {
         out.put("mappings", v.mappings());
         out.put("forbidPatterns", v.forbidPatterns());
         out.put("source", v.source());
+        return out;
+    }
+
+    /**
+     * 시스템에 잡혀있는 입력 장치(마이크) 목록 조회.
+     * scripts/list_mic_devices.py를 띄워서 sounddevice 장치 목록을 JSON으로 받아온다.
+     * 응답: { devices: [{index, name, channels, default}], current: 1|null }
+     */
+    private static final long MIC_PROBE_TIMEOUT_SECONDS = 10;
+
+    @GetMapping("/mic-devices")
+    public Map<String, Object> getMicDevices() {
+        List<Map<String, Object>> devices = new ArrayList<>();
+        try {
+            BotProperties.Stt stt = properties.getStt();
+            ProcessBuilder pb = new ProcessBuilder(
+                    stt.getPythonExecutable(), "scripts/list_mic_devices.py");
+            pb.environment().put("PYTHONIOENCODING", "utf-8");
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String output;
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+                output = reader.lines().reduce("", (a, b) -> a + b);
+            }
+            boolean finished = p.waitFor(MIC_PROBE_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) {
+                p.destroyForcibly();
+                log.warn("마이크 장치 목록 조회 타임아웃 ({}초)", MIC_PROBE_TIMEOUT_SECONDS);
+            } else if (p.exitValue() != 0) {
+                log.warn("마이크 장치 목록 조회 실패 (exit={}): {}", p.exitValue(), output);
+            } else if (!output.isBlank()) {
+                devices = objectMapper.readValue(output, List.class);
+            }
+        } catch (Exception e) {
+            log.warn("마이크 장치 목록 조회 실패: {}", e.getMessage());
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("devices", devices);
+        out.put("current", properties.getStt().getDeviceIndex());
         return out;
     }
 
