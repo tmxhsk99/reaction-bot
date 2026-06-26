@@ -57,6 +57,7 @@ public class UserConfigService {
             "reaction-bot.speech.profanity-filter.enabled",
             "reaction-bot.speech.profanity-filter.mode",
             "reaction-bot.stt.auto-start",
+            "reaction-bot.stt.device-index",
             "reaction-bot.pokemon.enabled",
             "reaction-bot.pokemon.overlay.enabled",
             "reaction-bot.pokemon.overlay.generation",
@@ -73,7 +74,8 @@ public class UserConfigService {
             "reaction-bot.character.custom-rules",
             "reaction-bot.claude-cli.executable",
             "reaction-bot.claude-cli.executable-search-dir",
-            "reaction-bot.codex-cli.executable"
+            "reaction-bot.codex-cli.executable",
+            "reaction-bot.stt.device-index"
     );
 
     // 마스킹할 시크릿 키
@@ -115,6 +117,8 @@ public class UserConfigService {
         out.put("reaction-bot.speech.profanity-filter.enabled", properties.getSpeech().getProfanityFilter().isEnabled());
         out.put("reaction-bot.speech.profanity-filter.mode", safe(properties.getSpeech().getProfanityFilter().getMode()));
         out.put("reaction-bot.stt.auto-start", properties.getStt().isAutoStart());
+        out.put("reaction-bot.stt.device-index",
+                properties.getStt().getDeviceIndex() == null ? "" : String.valueOf(properties.getStt().getDeviceIndex()));
         out.put("reaction-bot.pokemon.enabled", properties.getPokemon().isEnabled());
         out.put("reaction-bot.pokemon.overlay.enabled", properties.getPokemon().getOverlay().isEnabled());
         out.put("reaction-bot.pokemon.overlay.generation", properties.getPokemon().getOverlay().getGeneration());

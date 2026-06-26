@@ -274,6 +274,13 @@
         <label for="stt-auto" style="margin:0;">STT 워커 자동 시작 (마이크 켤지)</label>
       </div>
 
+      <label>마이크 입력 장치</label>
+      <select name="reaction-bot.stt.device-index" id="mic-select">
+        <option value="">불러오는 중...</option>
+      </select>
+      <div class="hint" id="mic-hint">현재 인식 중인 장치를 표시합니다. OS 기본 장치가 캡처카드/가상 장치로 잡혀 게임 소리를 마이크로 오인하는 경우, 여기서 실제 마이크를 직접 지정하세요.</div>
+      <div class="restart-note">⚠ 마이크 장치 변경은 서버 재기동 후 적용됩니다.</div>
+
       <div class="toggle">
         <input type="checkbox" id="idle-trigger" name="reaction-bot.idle-trigger.enabled">
         <label for="idle-trigger" style="margin:0;">능동 발문 (조용할 때 봇이 먼저 말 걸기)</label>
@@ -449,11 +456,46 @@ function bindCharCounters() {
   }
 }
 
+async function loadMicDevices() {
+  const sel = document.getElementById('mic-select');
+  const hint = document.getElementById('mic-hint');
+  if (!sel) return;
+  try {
+    const res = await fetch('/api/config/mic-devices');
+    if (!res.ok) throw new Error('GET /api/config/mic-devices ' + res.status);
+    const data = await res.json();
+    const current = data.current == null ? '' : String(data.current);
+    sel.innerHTML = '';
+    const blank = document.createElement('option');
+    blank.value = '';
+    blank.textContent = '(비워둠 — OS 기본 장치 사용)';
+    sel.appendChild(blank);
+    for (const d of (data.devices || [])) {
+      const opt = document.createElement('option');
+      opt.value = String(d.index);
+      opt.textContent = '[' + d.index + '] ' + d.name + (d.default ? '  (현재 OS 기본)' : '');
+      sel.appendChild(opt);
+    }
+    sel.value = current;
+    if (sel.value !== current) sel.value = '';
+    const curDevice = (data.devices || []).find(d => String(d.index) === current);
+    if (current === '') {
+      hint.textContent = '현재 설정값 없음 → OS 기본 장치를 사용 중. 게임 캡처카드 등이 기본으로 잡혀있으면 실제 마이크를 선택하세요.';
+    } else {
+      hint.textContent = '현재 선택됨: [' + current + '] ' + (curDevice ? curDevice.name : '(목록에 없음 — 장치 분리됐을 수 있음)');
+    }
+  } catch (e) {
+    sel.innerHTML = '<option value="">장치 목록 조회 실패</option>';
+    if (hint) hint.textContent = '마이크 장치 목록을 가져오지 못했습니다: ' + e.message;
+  }
+}
+
 async function load() {
   try {
     const res = await fetch('/api/config');
     if (!res.ok) throw new Error('GET /api/config ' + res.status);
     const cfg = await res.json();
+    await loadMicDevices();
     for (const [key, val] of Object.entries(cfg)) {
       const el = form.elements[key];
       if (!el) continue;
