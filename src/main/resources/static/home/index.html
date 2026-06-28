@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Reaction Bot — 홈</title>
+<link rel="stylesheet" href="/font/galmuri/galmuri.css">
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo",
+                 "Noto Sans KR", "Malgun Gothic", sans-serif;
+    margin: 0;
+    background: #0e1116;
+    color: #e6edf3;
+    padding: 40px 16px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  h1 {
+    margin: 0 0 4px;
+    font-size: 28px;
+    font-family: Galmuri11, sans-serif;
+    color: #f4d03f;
+  }
+  p.sub {
+    color: #8b949e;
+    margin: 0 0 28px;
+    font-size: 14px;
+  }
+  .group {
+    margin-bottom: 28px;
+  }
+  .group h2 {
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #58a6ff;
+    margin: 0 0 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #21262d;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px;
+  }
+  a.card {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 14px 16px;
+    transition: border-color 0.15s, transform 0.05s, background 0.15s;
+  }
+  a.card:hover {
+    border-color: #58a6ff;
+    background: #1c2434;
+  }
+  a.card:active {
+    transform: translateY(1px);
+  }
+  a.card.api {
+    background: #131722;
+    border-color: #21262d;
+    border-left: 3px solid #6e7681;
+  }
+  a.card.api:hover {
+    border-color: #6e7681;
+    background: #1a1f2e;
+  }
+  .card .title {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card .path {
+    font-family: ui-monospace, "GalmuriMono11", monospace;
+    font-size: 12px;
+    color: #58a6ff;
+    margin-bottom: 6px;
+    word-break: break-all;
+  }
+  .card.api .path { color: #8b949e; }
+  .card .desc {
+    font-size: 12px;
+    color: #8b949e;
+    line-height: 1.45;
+  }
+  .badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 8px;
+    font-size: 10px;
+    background: #21262d;
+    color: #adbac7;
+  }
+  .badge.mode-rb { background: #1f3a23; color: #56d364; }
+  .badge.mode-st { background: #1c2c44; color: #58a6ff; }
+  .badge.adm    { background: #3a2d06; color: #f0c674; }
+  .footer {
+    margin-top: 36px;
+    font-size: 12px;
+    color: #6e7681;
+    text-align: center;
+  }
+  .footer a { color: #58a6ff; text-decoration: none; }
+  .status-line {
+    font-family: ui-monospace, monospace;
+    font-size: 12px;
+    color: #6e7681;
+    margin: 6px 0 0;
+  }
+  .status-line .ok { color: #56d364; }
+  .status-line .err { color: #f85149; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Reaction Bot</h1>
+  <p class="sub">각 UI / API 진입점 모음. <span id="mode-line"></span></p>
+
+  <div class="group">
+    <h2>설정</h2>
+    <div class="grid">
+      <a class="card" href="/config">
+        <div class="title">⚙ 설정 <span class="badge adm">관리</span></div>
+        <div class="path">/config</div>
+        <div class="desc">모드 토글, LLM provider, 캐릭터, TTS, STT, 화면 번역, 포켓몬 등 전 설정. 저장 + 서버 재기동 버튼 포함.</div>
+      </a>
+    </div>
+  </div>
+
+  <div class="group">
+    <h2>리액션 봇 <span class="badge mode-rb">mode=reaction-bot</span></h2>
+    <div class="grid">
+      <a class="card" href="/avatar/" target="_blank">
+        <div class="title">🧍 아바타 미리보기</div>
+        <div class="path">/avatar</div>
+        <div class="desc">OBS 브라우저 소스에 띄울 캐릭터 아바타. 발화 시 입 모양 변화.</div>
+      </a>
+      <a class="card" href="/pokemon-overlay/" target="_blank">
+        <div class="title">🎴 포켓몬 오버레이 (송출용)</div>
+        <div class="path">/pokemon-overlay</div>
+        <div class="desc">스크린샷에서 포켓몬 인식 → 종족값/타입/스프라이트 카드 표시 (싱글 2 / 더블 4). OBS 브라우저 소스용.</div>
+      </a>
+      <a class="card" href="/pokemon-overlay/?edit=1" target="_blank">
+        <div class="title">🛠 포켓몬 오버레이 입력 모드 <span class="badge adm">관리</span></div>
+        <div class="path">/pokemon-overlay/?edit=1</div>
+        <div class="desc">수동 입력 바 표시 — 관리용 모니터 창. OBS 송출 창과는 별도로 띄워서 사용.</div>
+      </a>
+    </div>
+  </div>
+
+  <div class="group">
+    <h2>화면 번역 <span class="badge mode-st">mode=screen-translate</span></h2>
+    <div class="grid">
+      <a class="card" href="/translate/" target="_blank">
+        <div class="title">💬 실시간 번역 대화창</div>
+        <div class="path">/translate</div>
+        <div class="desc">포켓몬 스타일 대화창 (Galmuri 폰트). 자동 토글, 페이지, 최근 번역 재생 버튼.</div>
+      </a>
+      <a class="card" href="/translate/history">
+        <div class="title">📜 번역 히스토리</div>
+        <div class="path">/translate/history</div>
+        <div class="desc">일자별 번역 로그 + 별칭 지정. 그날 엔트리 타임라인.</div>
+      </a>
+      <a class="card" href="/translate/debug" target="_blank">
+        <div class="title">🔍 캡처 진단 <span class="badge adm">관리</span></div>
+        <div class="path">/translate/debug</div>
+        <div class="desc">LLM 에 전달되는 처리 후 이미지 + luma 통계 + dHash. 1.5s 자동 폴링.</div>
+      </a>
+    </div>
+  </div>
+
+  <div class="group">
+    <h2>관리 / API</h2>
+    <div class="grid">
+      <a class="card api" href="/api/status" target="_blank">
+        <div class="title">📡 서버 상태 (JSON)</div>
+        <div class="path">/api/status</div>
+        <div class="desc">현재 모드, 발화 상태, 마지막 발화 시각 등 헬스 체크.</div>
+      </a>
+      <a class="card api" href="/api/config" target="_blank">
+        <div class="title">📋 현재 설정 (JSON, 시크릿 마스킹)</div>
+        <div class="path">/api/config</div>
+        <div class="desc">/config UI 가 GET 하는 raw 데이터. 디버깅용.</div>
+      </a>
+      <a class="card api" href="/api/translate/state" target="_blank">
+        <div class="title">📨 현재 번역 상태 (JSON)</div>
+        <div class="path">/api/translate/state</div>
+        <div class="desc">현재 표시 중 번역 박스 + 페이지/최근 번역 스냅샷.</div>
+      </a>
+      <a class="card api" href="/api/translate/history" target="_blank">
+        <div class="title">🗂 번역 일자 리스트 (JSON)</div>
+        <div class="path">/api/translate/history</div>
+        <div class="desc">번역 일자 + 별칭 + 엔트리 수.</div>
+      </a>
+      <a class="card api" href="/api/pokemon-overlay/state" target="_blank">
+        <div class="title">🎴 포켓몬 오버레이 상태 (JSON)</div>
+        <div class="path">/api/pokemon-overlay/state</div>
+        <div class="desc">현재 인식된 포켓몬 카드, 모드, 세대 등.</div>
+      </a>
+      <a class="card api" href="/api/avatar/events" target="_blank">
+        <div class="title">🎙 아바타 이벤트 스트림 (SSE)</div>
+        <div class="path">/api/avatar/events</div>
+        <div class="desc">발화 시작/종료 등 실시간 푸시. 브라우저에서 열면 raw 이벤트 확인.</div>
+      </a>
+    </div>
+  </div>
+
+  <div class="footer">
+    <p class="status-line">서버 상태: <span id="server-status">확인 중…</span></p>
+    <p>
+      <a href="https://github.com/anthropics/claude-code" target="_blank">Claude Code</a>
+      ·
+      현재 mode = <code id="cur-mode">…</code>
+      ·
+      LLM provider = <code id="cur-provider">…</code>
+    </p>
+  </div>
+</div>
+
+<script>
+(async function loadStatus() {
+  const statusEl = document.getElementById('server-status');
+  const modeEl = document.getElementById('cur-mode');
+  const provEl = document.getElementById('cur-provider');
+  const modeLineEl = document.getElementById('mode-line');
+  try {
+    const res = await fetch('/api/config', { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const cfg = await res.json();
+    const mode = cfg['reaction-bot.mode'] || '?';
+    const prov = cfg['reaction-bot.llm.provider'] || '?';
+    statusEl.innerHTML = '<span class="ok">●</span> 응답 OK';
+    modeEl.textContent = mode;
+    provEl.textContent = prov;
+    modeLineEl.innerHTML = '현재 모드는 <code>' + mode + '</code>, LLM 은 <code>' + prov + '</code>.';
+  } catch (e) {
+    statusEl.innerHTML = '<span class="err">●</span> 응답 실패 — ' + e.message;
+  }
+})();
+</script>
+</body>
+</html>

@@ -28,6 +28,7 @@ public class PokemonOverlayScheduler {
 
     @Scheduled(fixedDelay = 1000)
     public void tick() {
+        if (properties.isScreenTranslateMode()) return;
         BotProperties.Overlay cfg = properties.getPokemon().getOverlay();
         if (!properties.getPokemon().isEnabled() || !cfg.isEnabled()) return;
         if (!"auto".equalsIgnoreCase(cfg.getMode())) return;

@@ -84,6 +84,10 @@
   }
   button:hover { background: #2ea043; }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.danger { background: #a04030; }
+  button.danger:hover { background: #c34a37; }
+  .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .actions .spacer { flex: 1; }
   .status {
     margin-top: 16px;
     padding: 12px;
@@ -105,6 +109,33 @@
   .links { margin-top: 24px; color: #6e7681; font-size: 13px; }
   .links a { color: #58a6ff; text-decoration: none; margin-right: 12px; }
   .links a:hover { text-decoration: underline; }
+  .mode-toggle {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin: 8px 0 4px;
+  }
+  .mode-toggle label {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    margin: 0;
+    padding: 12px 14px;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .mode-toggle label:hover { border-color: #58a6ff; }
+  .mode-toggle label.active {
+    border-color: #58a6ff;
+    background: #161f2d;
+  }
+  .mode-toggle input { position: absolute; opacity: 0; pointer-events: none; }
+  .mode-toggle .mode-title { font-size: 14px; font-weight: 600; color: #e6edf3; }
+  .mode-toggle .mode-desc { font-size: 12px; color: #8b949e; line-height: 1.4; }
 </style>
 </head>
 <body>
@@ -113,6 +144,133 @@
   <p class="sub">변경 후 <strong>저장</strong> → 적용하려면 서버를 한 번 재기동하세요.</p>
 
   <form id="form">
+    <div class="card">
+      <h2>동작 모드 <span class="badge">필수</span></h2>
+      <div class="hint">앱이 어떤 일을 할지 선택. 변경 후 저장 → 서버 재기동하면 모드가 전환됩니다.</div>
+
+      <div class="mode-toggle" id="mode-toggle">
+        <label data-mode="reaction-bot">
+          <input type="radio" name="reaction-bot.mode" value="reaction-bot" checked>
+          <span class="mode-title">리액션 봇 모드</span>
+          <span class="mode-desc">마이크 발화를 듣고 캐릭터가 TTS로 반응. 화면 캡처를 보조로 사용.</span>
+        </label>
+        <label data-mode="screen-translate">
+          <input type="radio" name="reaction-bot.mode" value="screen-translate">
+          <span class="mode-title">화면 번역 모드</span>
+          <span class="mode-desc">화면을 캡처해 텍스트를 인식·번역하여 표시. (개발 예정)</span>
+        </label>
+      </div>
+      <div class="restart-note">⚠ 모드 변경은 서버 재기동 후 적용됩니다.</div>
+    </div>
+
+    <div class="card" data-mode-scope="screen-translate">
+      <h2>화면 번역 모드 설정</h2>
+      <div class="hint">
+        화면을 주기적으로 캡처해 LLM 으로 번역 → <a href="/translate/" target="_blank">/translate</a> 대화창에 표시.
+        프레임 해시 prefilter 로 정적 구간 LLM 호출 스킵. TTS 도 함께 발화.
+        <br>히스토리는 <a href="/translate/history" target="_blank">/translate/history</a> 에서 일자별 조회.
+      </div>
+
+      <label>소스 언어 <span class="hint" style="margin-left:6px;">번역 대상이 될 언어 (다중 선택)</span></label>
+      <div class="radio-row" id="st-source-langs">
+        <label><input type="checkbox" name="reaction-bot.screen-translate.source-langs" value="ja"> 일본어 (ja)</label>
+        <label><input type="checkbox" name="reaction-bot.screen-translate.source-langs" value="en"> 영어 (en)</label>
+        <label><input type="checkbox" name="reaction-bot.screen-translate.source-langs" value="zh"> 중국어 (zh)</label>
+        <label><input type="checkbox" name="reaction-bot.screen-translate.source-langs" value="es"> 스페인어 (es)</label>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>대상 언어 (번역 결과)</label>
+          <select name="reaction-bot.screen-translate.target-lang">
+            <option value="ko">한국어 (ko)</option>
+            <option value="en">English (en)</option>
+            <option value="ja">日本語 (ja)</option>
+          </select>
+        </div>
+        <div>
+          <label>한 페이지 줄 수 <span class="hint" style="margin-left:6px;">스펙 기본 2</span></label>
+          <select name="reaction-bot.screen-translate.lines-per-page">
+            <option value="1">1줄</option>
+            <option value="2">2줄</option>
+            <option value="3">3줄</option>
+            <option value="4">4줄</option>
+          </select>
+        </div>
+      </div>
+
+      <label>번역 모드</label>
+      <div class="radio-row">
+        <label><input type="radio" name="reaction-bot.screen-translate.auto-mode" value="true"> 자동 (주기 캡처)</label>
+        <label><input type="radio" name="reaction-bot.screen-translate.auto-mode" value="false"> 수동 (/translate 버튼)</label>
+      </div>
+
+      <label>자동 모드 캡처 주기 (ms) <span class="hint" style="margin-left:6px;">권장 800~2000. 너무 짧으면 LLM 비용 ↑</span></label>
+      <input type="text" name="reaction-bot.screen-translate.interval-ms" placeholder="1000">
+
+      <label>단색 화면 판정 임계 (luma stddev) <span class="hint" style="margin-left:6px;">기본 8.0. 0=비활성. <a href="/translate/debug" target="_blank">진단 페이지</a> 에서 실제 값 확인 후 조정</span></label>
+      <input type="text" name="reaction-bot.screen-translate.blank-luma-stddev" placeholder="8.0">
+
+      <div class="row">
+        <div>
+          <label>dHash 안정성 임계 (0~64) <span class="hint" style="margin-left:6px;">같은 화면 판정 기준. 기본 10. ↑=오인↑ ↓=중복호출↑</span></label>
+          <input type="text" name="reaction-bot.screen-translate.hash-stability-threshold" placeholder="10">
+        </div>
+        <div>
+          <label>번역 유사도 dedup (0~1) <span class="hint" style="margin-left:6px;">직전 번역과 ratio ≥ 값이면 스킵. 기본 0.85</span></label>
+          <input type="text" name="reaction-bot.screen-translate.translation-dedup-similarity" placeholder="0.85">
+        </div>
+      </div>
+
+      <label>LLM 전달 이미지 가로폭 (px) <span class="hint" style="margin-left:6px;">자막 OCR 정확도 결정. 672=작음/저비용, 1280=권장, 1568=Anthropic 최대 정확. 토큰비용 비례</span></label>
+      <input type="text" name="reaction-bot.screen-translate.target-width" placeholder="1280">
+
+      <div class="toggle">
+        <input type="checkbox" id="st-stability" name="reaction-bot.screen-translate.require-frame-stability">
+        <label for="st-stability" style="margin:0;">2-프레임 안정성 체크 (이동 중에는 LLM 호출 자체 스킵 — 권장 ON)</label>
+      </div>
+
+      <div class="toggle">
+        <input type="checkbox" id="st-dialogue-only" name="reaction-bot.screen-translate.dialogue-only">
+        <label for="st-dialogue-only" style="margin:0;">대화창 텍스트만 번역 (UI 메뉴/시스템 메시지 무시) — 자동 모드 한정</label>
+      </div>
+
+      <div class="toggle">
+        <input type="checkbox" id="st-tts" name="reaction-bot.screen-translate.tts-enabled">
+        <label for="st-tts" style="margin:0;">TTS 발화 (번역 결과를 음성으로) — 위 TTS 설정의 보이스 재사용</label>
+      </div>
+
+      <label>캡처 범위</label>
+      <div class="radio-row" id="st-capture-mode">
+        <label><input type="radio" name="reaction-bot.screen-translate.capture-mode" value="fullscreen"> 전체 화면</label>
+        <label><input type="radio" name="reaction-bot.screen-translate.capture-mode" value="region"> 사용자 지정 영역</label>
+      </div>
+
+      <div id="st-region-fields" class="hidden">
+        <label>대화창 영역 좌표 <span class="hint" style="margin-left:6px;">아래 버튼으로 캡처하여 드래그로 지정</span></label>
+        <input type="text" name="reaction-bot.screen-translate.crop-region" id="st-crop-input" placeholder="x,y,w,h (0~1 정규화) — 예: 0.1,0.7,0.8,0.25" readonly>
+        <div style="margin-top:8px; display:flex; gap:8px;">
+          <button type="button" id="st-capture-btn" style="background:#1f6feb;">대화창 영역 지정 (스크린샷 + 드래그)</button>
+          <button type="button" id="st-clear-btn" style="background:#6e7681;">지운 후 전체화면 fallback</button>
+        </div>
+
+        <div id="st-region-pane" class="hidden" style="margin-top:12px;padding:12px;background:#0d1117;border:1px solid #30363d;border-radius:6px;">
+          <div class="hint">스크린샷 위에서 마우스 드래그로 대화창 영역을 그리세요. 다시 그리면 덮어씌워집니다.</div>
+          <div style="position:relative;display:inline-block;max-width:100%;">
+            <img id="st-region-img" alt="" style="display:block;max-width:100%;user-select:none;-webkit-user-drag:none;">
+            <div id="st-region-rect" style="position:absolute;border:2px dashed #f4d03f;background:rgba(244,208,63,0.15);display:none;pointer-events:none;"></div>
+          </div>
+          <div id="st-region-status" class="hint" style="margin-top:8px;"></div>
+          <div style="display:flex;gap:8px;margin-top:10px;">
+            <button type="button" id="st-region-save" disabled>이 영역으로 저장</button>
+            <button type="button" id="st-region-cancel" style="background:#6e7681;">취소</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="restart-note">⚠ 모드/주기/언어 변경은 서버 재기동 후 적용됩니다.</div>
+    </div>
+
     <div class="card">
       <h2>LLM Provider <span class="badge">필수</span></h2>
       <div class="hint">실제 응답을 생성할 LLM. provider별로 필요한 키/경로가 달라요 — 아래에서 선택하면 해당 섹션만 펼쳐집니다.</div>
@@ -192,7 +350,7 @@
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" data-mode-scope="reaction-bot">
       <h2>캐릭터</h2>
 
       <div class="row">
@@ -207,7 +365,7 @@
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" data-mode-scope="reaction-bot">
       <h2>개인화 - 캐릭터 프롬프트 <span class="badge">선택</span></h2>
       <div class="hint">
         AI가 따라할 캐릭터 성격을 직접 정의. 응답 형식·PASS 조건 같은 안전 규칙은 자동으로 포함됨.
@@ -242,7 +400,7 @@
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" data-mode-scope="reaction-bot">
       <h2>TTS (음성 합성)</h2>
       <div class="hint">Microsoft Edge 무료 TTS만 지원. 키 불필요.</div>
 
@@ -266,7 +424,7 @@
       <input type="password" name="reaction-bot.screen.obs.password">
     </div>
 
-    <div class="card">
+    <div class="card" data-mode-scope="reaction-bot">
       <h2>동작</h2>
 
       <div class="toggle">
@@ -292,7 +450,7 @@
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" data-mode-scope="reaction-bot">
       <h2>게임별 추가 프로세스 <span class="badge">선택</span></h2>
       <div class="hint">
         특정 게임을 할 때만 의미 있는 외부 API 연동. 해당 게임을 안 하면 끄는 게 좋아요 (불필요한 네트워크 호출 + 프롬프트 토큰 절약).
@@ -358,17 +516,24 @@
       </div>
     </div>
 
-    <button type="submit" id="save-btn">저장</button>
+    <div class="actions">
+      <button type="submit" id="save-btn">저장</button>
+      <div class="spacer"></div>
+      <button type="button" id="restart-btn" class="danger" title="서버 JVM을 재기동해 설정을 즉시 반영합니다. (Windows 11 전용)">서버 재기동 <span style="opacity:0.75;font-weight:400;font-size:12px;margin-left:4px;">(Windows 11 전용)</span></button>
+    </div>
   </form>
 
   <div id="status" class="status"></div>
 
   <div class="links">
+    <a href="/">← 홈 (전체 메뉴)</a>
     <a href="/avatar/" target="_blank">아바타 미리보기 →</a>
     <a href="/pokemon-overlay/" target="_blank">포켓몬 오버레이 →</a>
+    <a href="/translate/" target="_blank">화면 번역 →</a>
+    <a href="/translate/history" target="_blank">번역 히스토리 →</a>
+    <a href="/translate/debug" target="_blank">캡처 진단 →</a>
     <a href="/api/status" target="_blank">서버 상태 →</a>
     <a href="https://console.anthropic.com" target="_blank">Anthropic Console</a>
-    <a href="https://portal.azure.com" target="_blank">Azure Portal</a>
   </div>
 </div>
 
@@ -387,6 +552,8 @@ const ALLOW_EMPTY = new Set([
   'reaction-bot.character.custom-identity',
   'reaction-bot.character.custom-personality',
   'reaction-bot.character.custom-rules',
+  // crop-region 은 "" 로 지움 가능 (fullscreen fallback)
+  'reaction-bot.screen-translate.crop-region',
 ]);
 
 function setRadioValue(name, value) {
@@ -430,12 +597,46 @@ function refreshProviderPaneVisibility() {
   }
 }
 
+function refreshModeToggleActive() {
+  const v = getRadioValue('reaction-bot.mode');
+  for (const lbl of document.querySelectorAll('#mode-toggle label[data-mode]')) {
+    if (lbl.dataset.mode === v) lbl.classList.add('active');
+    else lbl.classList.remove('active');
+  }
+}
+
+// 현재 선택된 모드에 맞춰 data-mode-scope 카드 표시/숨김.
+// 속성 없는 카드(공용: 동작 모드, LLM Provider, 화면 캡처)는 항상 표시.
+function refreshModeScopedCards() {
+  const v = getRadioValue('reaction-bot.mode') || 'reaction-bot';
+  for (const card of document.querySelectorAll('.card[data-mode-scope]')) {
+    if (card.dataset.modeScope === v) card.classList.remove('hidden');
+    else card.classList.add('hidden');
+  }
+}
+
 function refreshOverlayVisibility() {
   const cb = document.getElementById('overlay-enabled');
   const wrap = document.getElementById('overlay-fields');
   if (!cb || !wrap) return;
   if (cb.checked) wrap.classList.remove('hidden');
   else wrap.classList.add('hidden');
+}
+
+function refreshCaptureModePane() {
+  const v = getRadioValue('reaction-bot.screen-translate.capture-mode');
+  const wrap = document.getElementById('st-region-fields');
+  if (!wrap) return;
+  if (v === 'region') wrap.classList.remove('hidden');
+  else wrap.classList.add('hidden');
+}
+
+function applySourceLangsValue(val) {
+  // val 은 ["ja", "en"] 같은 배열. 체크박스들을 그에 맞춰 셋업.
+  const set = new Set(Array.isArray(val) ? val : []);
+  for (const cb of document.querySelectorAll('input[name="reaction-bot.screen-translate.source-langs"]')) {
+    cb.checked = set.has(cb.value);
+  }
 }
 
 function updateCharCount(ta) {
@@ -505,6 +706,11 @@ async function load() {
     const cfg = await res.json();
     await loadMicDevices();
     for (const [key, val] of Object.entries(cfg)) {
+      // source-langs 는 다중 체크박스 그룹 → form.elements 가 NodeList 라 일반 흐름과 다름.
+      if (key === 'reaction-bot.screen-translate.source-langs') {
+        applySourceLangsValue(val);
+        continue;
+      }
       const el = form.elements[key];
       if (!el) continue;
       // 라디오 그룹 (RadioNodeList)
@@ -523,6 +729,9 @@ async function load() {
     refreshCustomPromptVisibility();
     refreshProviderPaneVisibility();
     refreshOverlayVisibility();
+    refreshModeToggleActive();
+    refreshModeScopedCards();
+    refreshCaptureModePane();
     bindCharCounters();
   } catch (e) {
     showStatus('설정 로드 실패: ' + e.message, true);
@@ -540,6 +749,13 @@ document.addEventListener('change', (e) => {
   if (e.target.name === 'reaction-bot.pokemon.overlay.enabled') {
     refreshOverlayVisibility();
   }
+  if (e.target.name === 'reaction-bot.mode') {
+    refreshModeToggleActive();
+    refreshModeScopedCards();
+  }
+  if (e.target.name === 'reaction-bot.screen-translate.capture-mode') {
+    refreshCaptureModePane();
+  }
 });
 
 form.addEventListener('submit', async (e) => {
@@ -549,8 +765,18 @@ form.addEventListener('submit', async (e) => {
 
   const data = {};
   const seenRadio = new Set();
+  const MULTI_CHECKBOX_KEYS = new Set(['reaction-bot.screen-translate.source-langs']);
   for (const el of form.elements) {
     if (!el.name) continue;
+    // 다중 체크박스 그룹은 별도 처리 (한 번만 모아서 배열로)
+    if (MULTI_CHECKBOX_KEYS.has(el.name)) {
+      if (data[el.name] != null) continue;
+      const checked = Array.from(
+          document.querySelectorAll('input[name="' + el.name + '"]:checked'))
+              .map(c => c.value);
+      data[el.name] = checked;
+      continue;
+    }
     if (el.type === 'checkbox') {
       data[el.name] = el.checked;
     } else if (el.type === 'radio') {
@@ -591,6 +817,194 @@ form.addEventListener('submit', async (e) => {
     saveBtn.textContent = '저장';
   }
 });
+
+const restartBtn = document.getElementById('restart-btn');
+
+async function pollStatusAndReload() {
+  // 재기동 후 /api/status 가 다시 200을 줄 때까지 1초마다 폴링. 최대 60초 (JVM 콜드 부트 여유).
+  const deadline = Date.now() + 60000;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 1000));
+    try {
+      const res = await fetch('/api/status', { cache: 'no-store' });
+      if (res.ok) {
+        showStatus('재기동 완료. 페이지를 새로고침합니다...', false);
+        await new Promise(r => setTimeout(r, 500));
+        location.reload();
+        return;
+      }
+    } catch (e) { /* 아직 안 떠 있음 */ }
+  }
+  showStatus('재기동 후 60초 안에 응답이 없습니다. 콘솔 창과 로그를 확인하세요.', true);
+  restartBtn.disabled = false;
+  restartBtn.textContent = '서버 재기동';
+}
+
+restartBtn.addEventListener('click', async () => {
+  if (!confirm('서버를 재기동할까요?\n약 5~10초간 응답이 끊깁니다. 저장하지 않은 변경은 사라집니다.')) return;
+  restartBtn.disabled = true;
+  restartBtn.textContent = '재기동 중...';
+  saveBtn.disabled = true;
+  try {
+    const res = await fetch('/api/config/restart', { method: 'POST' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.status === 'error') {
+      throw new Error(body.message || ('HTTP ' + res.status));
+    }
+    showStatus(body.message + ' 응답 복귀 시 자동 새로고침합니다...', false);
+    pollStatusAndReload();
+  } catch (e) {
+    showStatus('재기동 실패: ' + e.message, true);
+    restartBtn.disabled = false;
+    restartBtn.textContent = '서버 재기동';
+    saveBtn.disabled = false;
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// 화면 번역 모드 — 대화창 영역 드래그 선택
+// ─────────────────────────────────────────────────────────────
+(function setupRegionSelector() {
+  const captureBtn = document.getElementById('st-capture-btn');
+  const clearBtn = document.getElementById('st-clear-btn');
+  const cropInput = document.getElementById('st-crop-input');
+  const pane = document.getElementById('st-region-pane');
+  const img = document.getElementById('st-region-img');
+  const rect = document.getElementById('st-region-rect');
+  const statusEl = document.getElementById('st-region-status');
+  const saveBtn = document.getElementById('st-region-save');
+  const cancelBtn = document.getElementById('st-region-cancel');
+  if (!captureBtn) return;
+
+  let imgNatW = 0, imgNatH = 0;        // 원본 해상도
+  let dragStart = null;                 // 화면 좌표 (img 기준)
+  let dragRect = null;                  // {x,y,w,h} CSS px (img 기준)
+  let normalized = null;                // {x,y,w,h} 0~1
+
+  function resetRect() {
+    rect.style.display = 'none';
+    dragStart = null;
+    dragRect = null;
+    normalized = null;
+    saveBtn.disabled = true;
+    statusEl.textContent = '드래그하여 영역을 그리세요.';
+  }
+
+  function closePane() {
+    pane.classList.add('hidden');
+    img.src = '';
+    resetRect();
+  }
+
+  captureBtn.addEventListener('click', async () => {
+    captureBtn.disabled = true;
+    const origText = captureBtn.textContent;
+    captureBtn.textContent = '캡처 중…';
+    try {
+      const res = await fetch('/api/translate/capture-sample');
+      const body = await res.json();
+      if (body.status !== 'ok') throw new Error(body.message || 'capture-sample 실패');
+      img.src = 'data:image/png;base64,' + body.imageBase64Png;
+      imgNatW = body.width;
+      imgNatH = body.height;
+      pane.classList.remove('hidden');
+      resetRect();
+    } catch (e) {
+      alert('스크린샷 캡처 실패: ' + e.message);
+    } finally {
+      captureBtn.disabled = false;
+      captureBtn.textContent = origText;
+    }
+  });
+
+  clearBtn.addEventListener('click', () => {
+    cropInput.value = '';
+    statusEl.textContent = '영역 지운 후 저장 → fullscreen 으로 동작.';
+    closePane();
+  });
+
+  cancelBtn.addEventListener('click', () => closePane());
+
+  // 마우스 좌표를 img 기준 CSS px 로 변환
+  function pos(ev) {
+    const r = img.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(r.width, ev.clientX - r.left)),
+      y: Math.max(0, Math.min(r.height, ev.clientY - r.top)),
+    };
+  }
+
+  function drawRect(r) {
+    rect.style.display = 'block';
+    rect.style.left = r.x + 'px';
+    rect.style.top = r.y + 'px';
+    rect.style.width = r.w + 'px';
+    rect.style.height = r.h + 'px';
+  }
+
+  function computeNormalized() {
+    if (!dragRect) return null;
+    const dispW = img.clientWidth;
+    const dispH = img.clientHeight;
+    if (dispW === 0 || dispH === 0) return null;
+    const x = dragRect.x / dispW;
+    const y = dragRect.y / dispH;
+    const w = dragRect.w / dispW;
+    const h = dragRect.h / dispH;
+    return { x, y, w, h };
+  }
+
+  img.addEventListener('mousedown', (ev) => {
+    ev.preventDefault();
+    dragStart = pos(ev);
+    dragRect = { x: dragStart.x, y: dragStart.y, w: 0, h: 0 };
+    drawRect(dragRect);
+    saveBtn.disabled = true;
+  });
+
+  img.addEventListener('mousemove', (ev) => {
+    if (!dragStart) return;
+    const p = pos(ev);
+    dragRect = {
+      x: Math.min(dragStart.x, p.x),
+      y: Math.min(dragStart.y, p.y),
+      w: Math.abs(p.x - dragStart.x),
+      h: Math.abs(p.y - dragStart.y),
+    };
+    drawRect(dragRect);
+  });
+
+  function finishDrag() {
+    if (!dragStart) return;
+    dragStart = null;
+    if (!dragRect || dragRect.w < 8 || dragRect.h < 8) {
+      // 너무 작으면 무효
+      resetRect();
+      return;
+    }
+    normalized = computeNormalized();
+    if (normalized) {
+      const fmt = (v) => v.toFixed(4);
+      statusEl.textContent =
+        '정규화 좌표: ' + fmt(normalized.x) + ', ' + fmt(normalized.y) +
+        ', ' + fmt(normalized.w) + ', ' + fmt(normalized.h) +
+        '  (원본 ' + imgNatW + 'x' + imgNatH + ')';
+      saveBtn.disabled = false;
+    }
+  }
+
+  img.addEventListener('mouseup', finishDrag);
+  img.addEventListener('mouseleave', () => { if (dragStart) finishDrag(); });
+
+  saveBtn.addEventListener('click', () => {
+    if (!normalized) return;
+    const fmt = (v) => v.toFixed(4);
+    cropInput.value = fmt(normalized.x) + ',' + fmt(normalized.y) + ','
+                    + fmt(normalized.w) + ',' + fmt(normalized.h);
+    statusEl.textContent = '저장 대기. 상단 [저장] 버튼을 눌러 config.yml 에 반영하세요.';
+    closePane();
+  });
+})();
 
 load();
 </script>

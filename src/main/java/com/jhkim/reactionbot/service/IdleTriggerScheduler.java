@@ -47,6 +47,7 @@ public class IdleTriggerScheduler {
     @Scheduled(fixedRateString = "#{${reaction-bot.idle-trigger.check-interval-ms:20000}}",
             initialDelayString = "#{${reaction-bot.idle-trigger.check-interval-ms:20000}}")
     public void check() {
+        if (properties.isScreenTranslateMode()) return;
         BotProperties.IdleTrigger cfg = properties.getIdleTrigger();
         if (!cfg.isEnabled()) return;
 

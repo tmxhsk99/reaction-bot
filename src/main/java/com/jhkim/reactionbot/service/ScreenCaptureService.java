@@ -115,6 +115,168 @@ public class ScreenCaptureService {
         return pc.capture();
     }
 
+    /**
+     * 크롭 영역 선택 UI 용. 단색 판정 없이, 큰 해상도(원본/OBS 1080p)를 그대로 PNG base64 반환.
+     * 자동 번역 흐름에서 쓰는 captureBase64Jpeg() 와는 별도. 사용자가 드래그로 정확한 영역을 잡으려면
+     * 리사이즈 전의 충분히 큰 이미지가 필요해서 분리.
+     */
+    public SampleCapture captureSampleForSelection() {
+        String source = properties.getScreen().getSource();
+        BufferedImage img;
+        if ("obs".equalsIgnoreCase(source)) {
+            try {
+                String base64Jpeg = obsClient.captureBase64Jpeg();
+                byte[] bytes = Base64.getDecoder().decode(base64Jpeg);
+                img = ImageIO.read(new ByteArrayInputStream(bytes));
+                if (img == null) {
+                    throw new RuntimeException("OBS 캡처 디코드 실패");
+                }
+            } catch (Exception e) {
+                throw new RuntimeException("OBS 캡처 실패: " + e.getMessage(), e);
+            }
+        } else {
+            img = capture();
+        }
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            ImageIO.write(img, "png", baos);
+            return new SampleCapture(
+                    Base64.getEncoder().encodeToString(baos.toByteArray()),
+                    img.getWidth(), img.getHeight());
+        } catch (Exception e) {
+            throw new RuntimeException("PNG 인코딩 실패: " + e.getMessage(), e);
+        }
+    }
+
+    public record SampleCapture(String base64Png, int width, int height) {}
+
+    /**
+     * 화면 번역 전용. crop-region 적용 + 리사이즈 + 휘도 통계 + blank 판정.
+     * 호출자가 target width 지정 (화면 번역은 자막 가독성을 위해 reaction-bot 보다 큰 값 권장).
+     * @param blankLumaStddevThreshold 휘도 stddev 가 이 값 미만이면 blank
+     * @param targetWidth 0 이하면 reaction-bot 기본(672) 사용
+     */
+    public TranslateCapture captureForTranslate(String cropRegion, double blankLumaStddevThreshold, int targetWidth) {
+        String source = properties.getScreen().getSource();
+        BufferedImage raw;
+        if ("obs".equalsIgnoreCase(source)) {
+            try {
+                String base64Jpeg = obsClient.captureBase64Jpeg();
+                byte[] bytes = Base64.getDecoder().decode(base64Jpeg);
+                raw = ImageIO.read(new ByteArrayInputStream(bytes));
+                if (raw == null) throw new RuntimeException("OBS 캡처 디코드 실패");
+            } catch (Exception e) {
+                throw new RuntimeException("OBS 캡처 실패: " + e.getMessage(), e);
+            }
+        } else {
+            raw = capture();
+        }
+        int rawW = raw.getWidth();
+        int rawH = raw.getHeight();
+        BufferedImage cropped = applyCrop(raw, cropRegion);
+        int useWidth = targetWidth > 0 ? targetWidth : TARGET_WIDTH;
+        BufferedImage resized = resizeIfNeeded(cropped, useWidth);
+        LumaStats stats = lumaStats(resized);
+        boolean blank = (blankLumaStddevThreshold > 0) && (stats.stddev < blankLumaStddevThreshold);
+        if (blank) {
+            return new TranslateCapture(null, true, resized,
+                    rawW, rawH, resized.getWidth(), resized.getHeight(),
+                    stats.mean, stats.stddev, blankLumaStddevThreshold);
+        }
+        byte[] jpegBytes = toJpeg(resized);
+        return new TranslateCapture(
+                Base64.getEncoder().encodeToString(jpegBytes), false, resized,
+                rawW, rawH, resized.getWidth(), resized.getHeight(),
+                stats.mean, stats.stddev, blankLumaStddevThreshold);
+    }
+
+    /** 진단 정보 풍부판. 디버그 페이지용. PNG base64 도 함께 채워서 화면에 즉시 표시 가능. */
+    public DiagCapture captureForTranslateDiag(String cropRegion, double blankLumaStddevThreshold, int targetWidth) {
+        TranslateCapture cap = captureForTranslate(cropRegion, blankLumaStddevThreshold, targetWidth);
+        String pngBase64;
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            ImageIO.write(cap.image(), "png", baos);
+            pngBase64 = Base64.getEncoder().encodeToString(baos.toByteArray());
+        } catch (Exception e) {
+            pngBase64 = "";
+            log.warn("diag PNG 인코딩 실패: {}", e.getMessage());
+        }
+        return new DiagCapture(
+                properties.getScreen().getSource(),
+                cap.rawWidth(), cap.rawHeight(),
+                cropRegion == null ? "" : cropRegion,
+                cap.processedWidth(), cap.processedHeight(),
+                cap.lumaMean(), cap.lumaStddev(), cap.blankThreshold(), cap.blank(),
+                pngBase64);
+    }
+
+    public record TranslateCapture(
+            String base64Jpeg, boolean blank, BufferedImage image,
+            int rawWidth, int rawHeight,
+            int processedWidth, int processedHeight,
+            double lumaMean, double lumaStddev, double blankThreshold) {}
+
+    public record DiagCapture(
+            String source,            // "obs" | "robot"
+            int rawWidth, int rawHeight,
+            String cropRegion,
+            int processedWidth, int processedHeight,
+            double lumaMean, double lumaStddev, double blankThreshold, boolean blank,
+            String processedImageBase64Png) {}
+
+    private record LumaStats(double mean, double stddev) {}
+
+    /** isBlank() 의 통계 산출만 분리. 임계 비교는 호출자가. */
+    private LumaStats lumaStats(BufferedImage img) {
+        int w = img.getWidth();
+        int h = img.getHeight();
+        if (w == 0 || h == 0) return new LumaStats(0, 0);
+        int stepX = Math.max(1, w / 60);
+        int stepY = Math.max(1, h / 60);
+        double sum = 0, sumSq = 0;
+        int n = 0;
+        for (int y = 0; y < h; y += stepY) {
+            for (int x = 0; x < w; x += stepX) {
+                int rgb = img.getRGB(x, y);
+                int r = (rgb >> 16) & 0xFF;
+                int g = (rgb >> 8) & 0xFF;
+                int b = rgb & 0xFF;
+                double luma = 0.299 * r + 0.587 * g + 0.114 * b;
+                sum += luma;
+                sumSq += luma * luma;
+                n++;
+            }
+        }
+        if (n == 0) return new LumaStats(0, 0);
+        double mean = sum / n;
+        double variance = Math.max(0, sumSq / n - mean * mean);
+        return new LumaStats(mean, Math.sqrt(variance));
+    }
+
+    /** crop-region "x,y,w,h" (0~1 정규화) 적용. 빈 값/잘못된 형식이면 원본 그대로. */
+    private BufferedImage applyCrop(BufferedImage src, String cropRegion) {
+        if (cropRegion == null || cropRegion.isBlank()) return src;
+        try {
+            String[] parts = cropRegion.split(",");
+            if (parts.length != 4) return src;
+            double x = clamp01(Double.parseDouble(parts[0].trim()));
+            double y = clamp01(Double.parseDouble(parts[1].trim()));
+            double w = clamp01(Double.parseDouble(parts[2].trim()));
+            double h = clamp01(Double.parseDouble(parts[3].trim()));
+            int sx = (int) Math.round(x * src.getWidth());
+            int sy = (int) Math.round(y * src.getHeight());
+            int sw = Math.max(1, (int) Math.round(w * src.getWidth()));
+            int sh = Math.max(1, (int) Math.round(h * src.getHeight()));
+            sw = Math.min(sw, src.getWidth() - sx);
+            sh = Math.min(sh, src.getHeight() - sy);
+            return src.getSubimage(sx, sy, sw, sh);
+        } catch (Exception e) {
+            log.debug("crop-region 적용 실패, 원본 사용: {}", e.getMessage());
+            return src;
+        }
+    }
+
+    private static double clamp01(double v) { return Math.max(0, Math.min(1, v)); }
+
     /** base64 JPEG를 디코드해 단색 여부 판정. 디코드 실패 시 false(=그대로 전송)로 안전 폴백. */
     private boolean isBlankBase64Jpeg(String base64) {
         try {
@@ -187,15 +349,19 @@ public class ScreenCaptureService {
     }
 
     private BufferedImage resizeIfNeeded(BufferedImage src) {
-        if (src.getWidth() <= TARGET_WIDTH) {
+        return resizeIfNeeded(src, TARGET_WIDTH);
+    }
+
+    private BufferedImage resizeIfNeeded(BufferedImage src, int targetWidth) {
+        if (src.getWidth() <= targetWidth) {
             return src;
         }
-        int targetHeight = (int) (src.getHeight() * (TARGET_WIDTH / (double) src.getWidth()));
-        BufferedImage resized = new BufferedImage(TARGET_WIDTH, targetHeight, BufferedImage.TYPE_INT_RGB);
+        int targetHeight = (int) (src.getHeight() * (targetWidth / (double) src.getWidth()));
+        BufferedImage resized = new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = resized.createGraphics();
         g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
         g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-        g.drawImage(src, 0, 0, TARGET_WIDTH, targetHeight, null);
+        g.drawImage(src, 0, 0, targetWidth, targetHeight, null);
         g.dispose();
         return resized;
     }

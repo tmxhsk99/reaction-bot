@@ -18,6 +18,11 @@ spring:
       - optional:file:./config.yml
 
 reaction-bot:
+  # 앱 동작 모드. /config UI 최상단에서 토글로 전환.
+  #  "reaction-bot"     : 기본. STT → LLM → TTS 리액션 봇.
+  #  "screen-translate" : 화면 번역 모드 (추후 구현). 화면 캡처 텍스트를 번역해 표시.
+  mode: "reaction-bot"
+
   # 캐릭터 이름 / 스트리머 이름 (환경변수로 덮어쓰기 가능)
   # BOT_NAME, STREAMER_NAME 환경변수 설정 시 그 값을 우선 사용
   # use-custom-prompt=true 면 아래 custom-* 3종으로 character.yml 본문을 대체. /config UI에서 편집 권장.
@@ -157,6 +162,32 @@ reaction-bot:
     # {name} / {streamer} placeholder 치환됨.
     light-prompt-template: ""
     topic-prompt-template: ""
+
+  # 화면 번역 모드 (mode=screen-translate 일 때만 활성).
+  # 동작:
+  #   1) 주기(interval-ms)마다 ScreenCaptureService 로 캡처
+  #   2) dHash prefilter — 직전 프레임과 거의 같으면 LLM 호출 skip
+  #   3) triage LLM — "현재 보이는 텍스트가 대화창/캐릭터 대사인가? source-langs 중 하나인가?" 판단 + 원문 추출
+  #   4) 메인 LLM 으로 번역 (스피커/대사 분리 JSON 응답)
+  #   5) TTS(옵션) + /translate UI SSE 푸시 + 히스토리 파일 append
+  screen-translate:
+    source-langs: ["ja"]            # 다중 선택 가능. 예: ["ja","en"]
+    target-lang: "ko"
+    auto-mode: true                 # false=수동(/translate 버튼)만
+    interval-ms: 1000               # 자동 모드 캡처 주기. 권장 800~2000
+    dialogue-only: true             # true=캐릭터 대사만 (UI 메뉴 무시)
+    tts-enabled: true               # 번역 결과 TTS 발화
+    lines-per-page: 2               # 한 페이지 표시 줄 수
+    capture-mode: "fullscreen"      # "fullscreen" | "region"
+    crop-region: ""                 # "x,y,w,h" 0~1 정규화. region 모드일 때만
+    triage-provider: ""             # 빈 값=메인 provider 재사용
+    history-dir: ""                 # 빈 값=cwd ./translation-history
+    blank-luma-stddev: 8.0          # 단색 판정 임계. /translate/debug 에서 luma 확인 후 조정. 0=비활성
+    hash-stability-threshold: 10    # dHash hamming 임계. 이 이하면 같은 화면. 미세 노이즈 흡수
+    require-frame-stability: true   # true=프레임이 안정(직전과 유사)할 때만 LLM 호출. 이동/카메라워크 비용 절감
+    translation-dedup-similarity: 0.85  # 직전 번역과 유사도 ≥ 이 값이면 중복으로 보고 TTS/state/history 스킵
+    recent-buffer-size: 10          # /translate UI 최근 번역 재생 버튼 개수 (메모리 only)
+    target-width: 1280              # LLM 전달 이미지 가로폭. 672=reaction-bot 기본(자막엔 작음), 1280=권장, 1568=최대정확
 
   # 포켓몬 컨텍스트 - 발화에 포켓몬 이름 감지되면 PokeAPI에서 정보 받아와서 LLM에 주입
   pokemon:

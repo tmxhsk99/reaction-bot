@@ -54,6 +54,10 @@ public class ReactionOrchestrator {
     }
 
     public ReactionOutcome onSpeech(String text) {
+        if (properties.isScreenTranslateMode()) {
+            // 화면 번역 모드에선 STT 입력 자체를 무시 (마이크 미사용이지만 외부 POST 들어올 수 있음)
+            return new ReactionOutcome(Result.PASS, null);
+        }
         // 유저가 뭔가 말했다는 사실은 항상 기록 (idle trigger용)
         if (text != null && !text.trim().isEmpty()) {
             lastUserUtteranceAt.set(Instant.now());

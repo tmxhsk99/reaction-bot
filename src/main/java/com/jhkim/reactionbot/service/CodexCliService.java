@@ -280,6 +280,60 @@ public class CodexCliService implements LlmProvider {
         return sanitized;
     }
 
+    // ---------- 화면 번역 / 단발 vision/text 호출 ----------
+
+    @Override
+    public String analyzeImage(String systemPrompt, String userPrompt, String base64JpegImage) {
+        return analyzeImage(systemPrompt, userPrompt, base64JpegImage, true);
+    }
+
+    @Override
+    public String analyzeImage(String systemPrompt, String userPrompt,
+                               String base64JpegImage, boolean useTriageModel) {
+        BotProperties.CodexCli cfg = properties.getCodexCli();
+        String model = pickModel(cfg, useTriageModel);
+        Path imagePath = null;
+        if (base64JpegImage != null && !base64JpegImage.isBlank()) {
+            try {
+                imagePath = writeTempImage(base64JpegImage, cfg.getTempImageDir());
+            } catch (Exception e) {
+                log.warn("analyzeImage 임시 스크린샷 저장 실패. 이미지 없이 진행: {}", e.getMessage());
+            }
+        }
+        // 페르소나/히스토리 일체 미포함. systemPrompt+userPrompt 만.
+        String prompt = "[지침]\n" + systemPrompt + "\n\n" + userPrompt;
+        try {
+            int timeout = useTriageModel ? cfg.getTriageTimeoutSec() : cfg.getTimeoutSec();
+            return callCodex(cfg, prompt, model, imagePath, timeout);
+        } catch (Exception e) {
+            log.warn("analyzeImage Codex 호출 실패: {}", e.getMessage());
+            throw new RuntimeException("analyzeImage 실패: " + e.getMessage(), e);
+        } finally {
+            deleteQuietly(imagePath);
+        }
+    }
+
+    @Override
+    public String analyzeText(String systemPrompt, String userPrompt, boolean useTriageModel) {
+        BotProperties.CodexCli cfg = properties.getCodexCli();
+        String model = pickModel(cfg, useTriageModel);
+        String prompt = "[지침]\n" + systemPrompt + "\n\n" + userPrompt;
+        try {
+            int timeout = useTriageModel ? cfg.getTriageTimeoutSec() : cfg.getTimeoutSec();
+            return callCodex(cfg, prompt, model, null, timeout);
+        } catch (Exception e) {
+            log.warn("analyzeText Codex 호출 실패: {}", e.getMessage());
+            throw new RuntimeException("analyzeText 실패: " + e.getMessage(), e);
+        }
+    }
+
+    private static String pickModel(BotProperties.CodexCli cfg, boolean useTriageModel) {
+        if (useTriageModel) {
+            return isBlank(cfg.getTriageModel()) ? cfg.getModel() : cfg.getTriageModel();
+        }
+        return cfg.getModel();
+    }
+
     // ---------- 프롬프트 합성 ----------
 
     private String buildSystemPrompt(BotProperties.CodexCli cfg, String input) {

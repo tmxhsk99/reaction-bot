@@ -429,4 +429,38 @@ public class OllamaService implements LlmProvider {
             history.popLast();
         }
     }
+
+    // ---------- 화면 번역 / 단발 vision/text 호출 ----------
+    // Ollama 는 triage/main 분리가 없음 → useTriageModel 무관하게 단일 모델(ollama.model) 사용.
+
+    @Override
+    public String analyzeImage(String systemPrompt, String userPrompt, String base64JpegImage) {
+        return analyzeImage(systemPrompt, userPrompt, base64JpegImage, true);
+    }
+
+    @Override
+    public String analyzeImage(String systemPrompt, String userPrompt,
+                               String base64JpegImage, boolean useTriageModel) {
+        return callRaw(systemPrompt, userPrompt, base64JpegImage);
+    }
+
+    @Override
+    public String analyzeText(String systemPrompt, String userPrompt, boolean useTriageModel) {
+        return callRaw(systemPrompt, userPrompt, null);
+    }
+
+    private String callRaw(String systemPrompt, String userPrompt, String base64JpegImage) {
+        // think 모드 안정성 — /no_think 토큰을 시스템 프롬프트에 append (이미 think=true 면 생략)
+        String sys = systemPrompt;
+        if (!properties.getOllama().isThink()) {
+            sys = sys + "\n\n/no_think";
+        }
+        try {
+            String raw = callOllamaSingle(sys, userPrompt, base64JpegImage);
+            return stripThinkBlocks(raw).trim();
+        } catch (Exception e) {
+            log.warn("Ollama raw 호출 실패: {}", e.getMessage());
+            throw new RuntimeException("Ollama raw 호출 실패: " + e.getMessage(), e);
+        }
+    }
 }

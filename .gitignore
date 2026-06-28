@@ -35,6 +35,12 @@ venv/
 # ===== TTS 런타임 생성물 =====
 tts-output/
 
+# ===== 화면 번역 모드 런타임 산출물 =====
+# logs/: spring-boot 회전 로그
+# translation-history/: 화면 번역 결과 일자별 JSONL + 별칭
+logs/
+translation-history/
+
 # ===== /config UI 저장값 + 런타임 캐시 =====
 # config.yml: /config UI 가 저장하는 사용자 설정. spring.config.import 로 머지됨.
 # data/: PokéAPI 일어 인덱스 캐시 등 봇 런타임 부산물.
