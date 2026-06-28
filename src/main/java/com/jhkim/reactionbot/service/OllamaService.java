@@ -441,6 +441,12 @@ public class OllamaService implements LlmProvider {
     @Override
     public String analyzeImage(String systemPrompt, String userPrompt,
                                String base64JpegImage, boolean useTriageModel) {
+        if (!properties.getOllama().isVision()) {
+            // ollama.vision=false (텍스트 전용 모델) 일 때는 이미지 분석 자체 불가.
+            // ScreenTranslateOrchestrator 가 UnsupportedOperationException 잡아 UI 에 안내.
+            throw new UnsupportedOperationException(
+                    "Ollama vision 비활성 (reaction-bot.ollama.vision=false). VL 모델 + vision=true 필요.");
+        }
         return callRaw(systemPrompt, userPrompt, base64JpegImage);
     }
 

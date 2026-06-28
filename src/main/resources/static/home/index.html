@@ -236,10 +236,22 @@
     const cfg = await res.json();
     const mode = cfg['reaction-bot.mode'] || '?';
     const prov = cfg['reaction-bot.llm.provider'] || '?';
+    // statusEl 은 정적 마크업이라 OK. modeLineEl 은 사용자가 저장하는 값(mode/prov)을 출력하므로
+    // textContent + createElement 로 stored XSS 차단.
     statusEl.innerHTML = '<span class="ok">●</span> 응답 OK';
     modeEl.textContent = mode;
     provEl.textContent = prov;
-    modeLineEl.innerHTML = '현재 모드는 <code>' + mode + '</code>, LLM 은 <code>' + prov + '</code>.';
+    const modeCode = document.createElement('code');
+    modeCode.textContent = mode;
+    const provCode = document.createElement('code');
+    provCode.textContent = prov;
+    modeLineEl.replaceChildren(
+      document.createTextNode('현재 모드는 '),
+      modeCode,
+      document.createTextNode(', LLM 은 '),
+      provCode,
+      document.createTextNode('.')
+    );
   } catch (e) {
     statusEl.innerHTML = '<span class="err">●</span> 응답 실패 — ' + e.message;
   }

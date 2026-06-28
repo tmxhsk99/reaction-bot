@@ -56,7 +56,7 @@ public class TranslateController {
             return out;
         } catch (Exception e) {
             log.warn("capture-sample 실패", e);
-            return Map.of("status", "error", "message", e.getMessage());
+            return Map.of("status", "error", "message", safeErr(e));
         }
     }
 
@@ -83,7 +83,7 @@ public class TranslateController {
             return Map.of("status", "ok", "message", "번역 요청 큐잉됨");
         } catch (Exception e) {
             log.warn("manual 번역 트리거 실패", e);
-            return Map.of("status", "error", "message", e.getMessage());
+            return Map.of("status", "error", "message", safeErr(e));
         }
     }
 
@@ -162,7 +162,7 @@ public class TranslateController {
             return out;
         } catch (Exception e) {
             log.warn("debug capture 실패", e);
-            return Map.of("status", "error", "message", e.getMessage());
+            return Map.of("status", "error", "message", safeErr(e));
         }
     }
 
@@ -173,5 +173,11 @@ public class TranslateController {
         String alias = body.get("alias") == null ? "" : String.valueOf(body.get("alias")).trim();
         history.setAlias(date, alias);
         return Map.of("status", "ok", "date", date, "alias", alias);
+    }
+
+    /** Map.of 는 null 값을 거부 → e.getMessage() 가 null 일 때 폴백. */
+    private static String safeErr(Throwable e) {
+        String m = e.getMessage();
+        return (m == null || m.isBlank()) ? e.getClass().getSimpleName() : m;
     }
 }

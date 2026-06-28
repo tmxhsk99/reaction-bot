@@ -547,7 +547,9 @@ public class ClaudeCliService implements LlmProvider {
             try {
                 imagePath = writeTempImage(base64JpegImage, cfg.getTempImageDir());
             } catch (Exception e) {
-                log.warn("analyzeImage 임시 스크린샷 저장 실패. 이미지 없이 진행: {}", e.getMessage());
+                // 이미지를 못 만들었는데 text-only 로 다운그레이드하면 LLM 이 화면 안 보고
+                // 환각 JSON 을 뱉을 위험 → fail fast.
+                throw new RuntimeException("analyzeImage 실패: 임시 스크린샷 저장 실패", e);
             }
         }
 

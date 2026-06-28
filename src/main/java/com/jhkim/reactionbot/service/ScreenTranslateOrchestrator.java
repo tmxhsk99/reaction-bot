@@ -257,16 +257,22 @@ public class ScreenTranslateOrchestrator {
         broadcast();
     }
 
+    /** 수동 트리거 — prefilter/dialogue-only 우회. screen-translate 모드 아니면 거부. */
     public void triggerManual() {
+        if (!properties.isScreenTranslateMode()) {
+            lastError.set("screen-translate 모드가 아닙니다. /config 에서 모드 전환 후 재기동하세요.");
+            broadcast();
+            return;
+        }
         runExecutor.execute(() -> runOnce(true));
     }
 
-    /** 런타임 자동 토글. 반환은 토글 후 상태. cfg.autoMode=false 면 토글 무관(항상 false). */
+    /** 런타임 자동 토글. 반환은 effective 상태 — cfg.autoMode=false 면 항상 false. */
     public boolean toggleAuto() {
         boolean now = !autoRuntimeEnabled.get();
         autoRuntimeEnabled.set(now);
         broadcast();
-        return now;
+        return properties.getScreenTranslate().isAutoMode() && now;
     }
 
     /** 명시적 set. */
@@ -385,9 +391,8 @@ public class ScreenTranslateOrchestrator {
                         return;
                     }
                 }
-                // 새 안정 상태 진입 — 호출 진행
-                lastStableHash.set(currentHash);
-                hasLastStableHash.set(true);
+                // 새 안정 상태 진입 — lastStableHash 는 stage 1/2 결과를 확정한 뒤 commit.
+                // (LLM 호출이 transient 실패하면 같은 프레임을 다음 tick 에서 다시 시도 가능)
             } else {
                 // 수동이면 이후 hash 비교의 기준점 갱신
                 lastFrameHash.set(currentHash);
@@ -423,6 +428,8 @@ public class ScreenTranslateOrchestrator {
                 return;
             }
             if (triage == null) {
+                // 이 프레임은 LLM 이 SKIP 으로 확정 — 같은 프레임 재시도 무의미. stable commit.
+                commitStableHash(currentHash, force);
                 recordDiag("stage1-skip",
                         "Stage 1 응답이 SKIP — 대상 언어가 아니거나 (현재 source-langs=" + cfg.getSourceLangs()
                                 + ") 대화창 텍스트가 아니라고 LLM이 판단. dialogue-only=" + cfg.isDialogueOnly()
@@ -437,6 +444,7 @@ public class ScreenTranslateOrchestrator {
                 String normLastSrc = normalizeForDedup(lastSource.get());
                 double srcSim = similarityRatio(normSrc, normLastSrc);
                 if (srcSim >= cfg.getTranslationDedupSimilarity()) {
+                    commitStableHash(currentHash, force);
                     recordDiag("source-dedup",
                             "Stage 1 추출한 source 가 직전과 유사도 " + String.format("%.2f", srcSim)
                                     + " ≥ " + cfg.getTranslationDedupSimilarity() + " — stage 2 스킵",
@@ -472,6 +480,7 @@ public class ScreenTranslateOrchestrator {
                 return;
             }
             if (translated.isBlank()) {
+                commitStableHash(currentHash, force);
                 recordDiag("stage2-blank", "Stage 2 응답이 빈 문자열",
                         hashHex, dPrev, dStable, stage1Raw, triage, stage2Raw);
                 return;
@@ -480,6 +489,7 @@ public class ScreenTranslateOrchestrator {
             // LLM 이 "원문을 입력해 주세요" 같은 메타 응답을 뱉었으면 TTS/UI 로 흘려보내지 않음.
             if (looksLikeMetaResponse(translated)) {
                 log.debug("화면 번역: stage 2 가 메타-응답 반환 - 폐기. raw={}", translated);
+                commitStableHash(currentHash, force);
                 recordDiag("stage2-meta",
                         "Stage 2 가 '원문 없음' 식 메타-응답 반환 — 폐기. raw=" + preview(translated, 100),
                         hashHex, dPrev, dStable, stage1Raw, triage, stage2Raw);
@@ -495,6 +505,7 @@ public class ScreenTranslateOrchestrator {
                     log.debug("화면 번역: translated 유사도 {} ≥ {} → state/TTS/history 스킵",
                             tSim, cfg.getTranslationDedupSimilarity());
                     lastSource.set(triage.source);
+                    commitStableHash(currentHash, force);
                     recordDiag("translated-dedup",
                             "translated 유사도 " + String.format("%.2f", tSim)
                                     + " ≥ " + cfg.getTranslationDedupSimilarity() + " — state/TTS/history 스킵",
@@ -520,6 +531,7 @@ public class ScreenTranslateOrchestrator {
             lastError.set(null);
             pushRecent(entry, cfg.getRecentBufferSize());
             entriesProduced.incrementAndGet();
+            commitStableHash(currentHash, force);
             broadcast();
 
             historyService.append(new TranslationHistoryService.HistoryEntry(
@@ -539,6 +551,14 @@ public class ScreenTranslateOrchestrator {
                     hashHex, dPrev, dStable, stage1Raw, triage, stage2Raw);
         } finally {
             translating.set(false);
+        }
+    }
+
+    /** 이 프레임을 처리 완료(non-retryable)로 마킹 — 다음 같은 화면은 same-stable 스킵. force=true (수동) 면 미리 셋됨. */
+    private void commitStableHash(long currentHash, boolean force) {
+        if (!force) {
+            lastStableHash.set(currentHash);
+            hasLastStableHash.set(true);
         }
     }
 
@@ -618,6 +638,13 @@ public class ScreenTranslateOrchestrator {
         } else {
             // balanced brace 매칭으로 첫 완전한 {...} 추출
             jsonCandidate = extractFirstJsonObject(trimmed);
+        }
+        // balanced 매칭이 null 인데 응답이 '{' 로 시작하면 잘림 가능성 — 복구 시도용 후보로 채택
+        if (jsonCandidate == null) {
+            int firstBrace = trimmed.indexOf('{');
+            if (firstBrace >= 0) {
+                jsonCandidate = trimmed.substring(firstBrace).trim();
+            }
         }
         if (jsonCandidate == null) {
             if (SKIP_TOKEN.matcher(trimmed).find()) {

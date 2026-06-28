@@ -157,6 +157,7 @@ const lastTsEl = document.getElementById('last-ts');
 
 let autoTimer = null;
 let lastDhash = null;
+let loadInFlight = false;   // capture + pipeline 폴링 중복 방지
 
 function fmtNum(v, digits) {
   if (v == null) return '-';
@@ -218,6 +219,9 @@ function render(data) {
 }
 
 async function load() {
+  // 직전 cycle 이 아직 진행 중이면 skip — OBS/LLM 응답 지연 시 요청 누적 방지.
+  if (loadInFlight) return;
+  loadInFlight = true;
   try {
     const res = await fetch('/api/translate/debug/capture', { cache: 'no-store' });
     const body = await res.json();
@@ -225,8 +229,10 @@ async function load() {
   } catch (e) {
     statsEl.innerHTML = '';
     imgwrapEl.innerHTML = '<div class="err-box">fetch 실패: ' + e.message + '</div>';
+  } finally {
+    try { await loadPipeline(); } catch (_) {}
+    loadInFlight = false;
   }
-  loadPipeline();
 }
 
 const plStatsEl = document.getElementById('pipeline-stats');

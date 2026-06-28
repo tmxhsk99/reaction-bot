@@ -297,7 +297,8 @@ public class CodexCliService implements LlmProvider {
             try {
                 imagePath = writeTempImage(base64JpegImage, cfg.getTempImageDir());
             } catch (Exception e) {
-                log.warn("analyzeImage 임시 스크린샷 저장 실패. 이미지 없이 진행: {}", e.getMessage());
+                // text-only fallback 하면 LLM 이 화면 없이 추측 응답 → stage 1 환각 위험. fail fast.
+                throw new RuntimeException("analyzeImage 실패: 임시 스크린샷 저장 실패", e);
             }
         }
         // 페르소나/히스토리 일체 미포함. systemPrompt+userPrompt 만.

@@ -79,7 +79,9 @@ public class UserConfigService {
             "reaction-bot.screen-translate.hash-stability-threshold",
             "reaction-bot.screen-translate.require-frame-stability",
             "reaction-bot.screen-translate.translation-dedup-similarity",
-            "reaction-bot.screen-translate.target-width"
+            "reaction-bot.screen-translate.target-width",
+            "reaction-bot.screen-translate.recent-buffer-size",
+            "reaction-bot.screen-translate.history-dir"
     );
 
     // 빈 문자열로의 변경을 허용하는 키. (기본 정책은 빈 값=변경 안 함 이지만 텍스트영역/경로는 지워서 자동 탐색 복귀 가능해야 함)
@@ -91,7 +93,9 @@ public class UserConfigService {
             "reaction-bot.claude-cli.executable-search-dir",
             "reaction-bot.codex-cli.executable",
             // crop-region 은 ""=fullscreen fallback 으로 되돌리는 의미
-            "reaction-bot.screen-translate.crop-region"
+            "reaction-bot.screen-translate.crop-region",
+            // history-dir 는 ""=cwd ./translation-history 폴백
+            "reaction-bot.screen-translate.history-dir"
     );
 
     // 빈 값으로 보내면 "변경 안 함"이 아니라 키 자체를 지워서 null/기본값으로 되돌리는 키.
@@ -164,6 +168,8 @@ public class UserConfigService {
         out.put("reaction-bot.screen-translate.require-frame-stability", st.isRequireFrameStability());
         out.put("reaction-bot.screen-translate.translation-dedup-similarity", st.getTranslationDedupSimilarity());
         out.put("reaction-bot.screen-translate.target-width", st.getTargetWidth());
+        out.put("reaction-bot.screen-translate.recent-buffer-size", st.getRecentBufferSize());
+        out.put("reaction-bot.screen-translate.history-dir", safe(st.getHistoryDir()));
         return out;
     }
 

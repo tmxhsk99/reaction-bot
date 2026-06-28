@@ -134,6 +134,10 @@ public class ConfigController {
      *
      * 자동 탐색이 실패하면 UI 에 안내 메시지를 띄우고 종료하지 않는다.
      */
+    // 동일 재기동 동시 트리거(더블 클릭/재시도/병렬 요청) → 여러 인스턴스가 포트 8080 경쟁하는 사고 방지.
+    private final java.util.concurrent.atomic.AtomicBoolean restartInProgress =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
     @PostMapping("/restart")
     public Map<String, Object> restart() {
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
@@ -142,52 +146,70 @@ public class ConfigController {
                     "status", "error",
                     "message", "셀프 재기동은 현재 Windows 환경만 지원합니다.");
         }
-
-        String cwd = System.getProperty("user.dir", ".");
-        RelaunchPlan plan = resolveRelaunchPlan(cwd);
-        if (plan == null) {
+        // 가드: spawn 까지 진행한 후엔 절대 다시 못 들어가게.
+        if (!restartInProgress.compareAndSet(false, true)) {
             return Map.of(
-                    "status", "error",
-                    "message", "재실행 명령을 결정할 수 없습니다. start.bat 없음 + ProcessHandle/JVM props 모두 비어있음. "
-                             + "콘솔에서 수동으로 재실행해 주세요.");
+                    "status", "ok",
+                    "message", "이미 재기동이 진행 중입니다.");
         }
-        log.info("재기동 명령 (source={}): {}", plan.source(), plan.command());
-
-        Path script;
+        boolean spawned = false;
         try {
-            script = Files.createTempFile("reaction-bot-restart-", ".bat");
-            // 4초 대기 = 현재 JVM shutdown hook + 포트 8080 해제 여유.
-            String body = "@echo off\r\n"
-                    + "chcp 65001 >nul\r\n"
-                    + "timeout /t 4 /nobreak >nul\r\n"
-                    + "cd /d \"" + cwd + "\"\r\n"
-                    + plan.command() + "\r\n";
-            Files.writeString(script, body, StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            log.error("재기동 스크립트 생성 실패", e);
-            return Map.of("status", "error", "message", "재기동 스크립트 생성 실패: " + e.getMessage());
+            String cwd = System.getProperty("user.dir", ".");
+            RelaunchPlan plan = resolveRelaunchPlan(cwd);
+            if (plan == null) {
+                return Map.of(
+                        "status", "error",
+                        "message", "재실행 명령을 결정할 수 없습니다. start.bat 없음 + ProcessHandle/JVM props 모두 비어있음. "
+                                + "콘솔에서 수동으로 재실행해 주세요.");
+            }
+            // 명령 본문(JVM args/API 키 등 시크릿 포함 가능)은 로그에 남기지 않음. source 만 기록.
+            log.info("재기동 명령 결정 (source={})", plan.source());
+
+            Path script;
+            try {
+                script = Files.createTempFile("reaction-bot-restart-", ".bat");
+                // 4초 대기 = 현재 JVM shutdown hook + 포트 8080 해제 여유.
+                // 마지막 줄: 새 인스턴스 spawn 후 본인(.bat) 자가 삭제 → 시크릿이 디스크에 남지 않음.
+                String body = "@echo off\r\n"
+                        + "chcp 65001 >nul\r\n"
+                        + "timeout /t 4 /nobreak >nul\r\n"
+                        + "cd /d \"" + cwd + "\"\r\n"
+                        + plan.command() + "\r\n"
+                        + "del \"%~f0\" >nul 2>&1\r\n";
+                Files.writeString(script, body, StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                log.error("재기동 스크립트 생성 실패", e);
+                return Map.of("status", "error", "message", "재기동 스크립트 생성 실패: " + e.getMessage());
+            }
+
+            try {
+                new ProcessBuilder("cmd", "/c", "start", "Reaction Bot Restart", "cmd", "/c",
+                        script.toAbsolutePath().toString())
+                        .start();
+                spawned = true;
+            } catch (IOException e) {
+                log.error("재기동 프로세스 spawn 실패", e);
+                // spawn 실패 시 임시 스크립트 즉시 삭제(시크릿 보존 방지).
+                try { Files.deleteIfExists(script); } catch (IOException ignored) {}
+                return Map.of("status", "error", "message", "재기동 프로세스 spawn 실패: " + e.getMessage());
+            }
+
+            Thread killer = new Thread(() -> {
+                try { Thread.sleep(800); } catch (InterruptedException ignored) {}
+                log.info("System.exit(0) — 재기동 트리거");
+                System.exit(0);
+            }, "restart-killer");
+            killer.setDaemon(true);
+            killer.start();
+
+            return Map.of(
+                    "status", "ok",
+                    "message", "재기동 트리거됨 (" + plan.source() + "). 약 5~10초 후 새 인스턴스가 뜹니다.");
+        } finally {
+            // spawn 성공 시엔 곧 System.exit(0) 이라 가드 해제할 필요 없음.
+            // spawn 전에 return 한 경우(에러 등) 가드 풀어 다음 시도 가능하게.
+            if (!spawned) restartInProgress.set(false);
         }
-
-        try {
-            new ProcessBuilder("cmd", "/c", "start", "Reaction Bot Restart", "cmd", "/c",
-                    script.toAbsolutePath().toString())
-                    .start();
-        } catch (IOException e) {
-            log.error("재기동 프로세스 spawn 실패", e);
-            return Map.of("status", "error", "message", "재기동 프로세스 spawn 실패: " + e.getMessage());
-        }
-
-        Thread killer = new Thread(() -> {
-            try { Thread.sleep(800); } catch (InterruptedException ignored) {}
-            log.info("System.exit(0) — 재기동 트리거");
-            System.exit(0);
-        }, "restart-killer");
-        killer.setDaemon(true);
-        killer.start();
-
-        return Map.of(
-                "status", "ok",
-                "message", "재기동 트리거됨 (" + plan.source() + "). 약 5~10초 후 새 인스턴스가 뜹니다.");
     }
 
     private record RelaunchPlan(String source, String command) {}

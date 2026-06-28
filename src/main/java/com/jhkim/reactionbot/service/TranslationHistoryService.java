@@ -78,11 +78,11 @@ public class TranslationHistoryService {
         }
     }
 
-    /** 새 번역 엔트리 append. 호출 시점 날짜의 파일에 들어감. */
+    /** 새 번역 엔트리 append. 엔트리의 ts(시스템 zone) 기준 일자별 파일에 들어감. */
     public void append(HistoryEntry entry) {
         writeLock.lock();
         try {
-            Path file = fileForDate(currentDate());
+            Path file = fileForDate(bucketDate(entry));
             Files.createDirectories(file.getParent());
             String json = objectMapper.writeValueAsString(entry);
             Files.writeString(file, json + System.lineSeparator(),
@@ -92,6 +92,18 @@ public class TranslationHistoryService {
             log.warn("히스토리 append 실패: {}", e.getMessage());
         } finally {
             writeLock.unlock();
+        }
+    }
+
+    /** 엔트리의 ts(ISO 8601 UTC) 를 시스템 zone 으로 변환해 일자 산출. 실패 시 currentDate() 폴백. */
+    private String bucketDate(HistoryEntry entry) {
+        try {
+            return Instant.parse(entry.ts())
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDate()
+                    .format(DATE_FMT);
+        } catch (Exception ignored) {
+            return currentDate();
         }
     }
 
@@ -167,7 +179,13 @@ public class TranslationHistoryService {
         return Paths.get(workingDir, "translation-history");
     }
 
+    // YYYY-MM-DD 정확히 매칭. path traversal / 경로 분리자 / 기타 파일명 메타문자 모두 거부.
+    private static final java.util.regex.Pattern DATE_RE = java.util.regex.Pattern.compile("^\\d{4}-\\d{2}-\\d{2}$");
+
     private Path fileForDate(String date) {
+        if (date == null || !DATE_RE.matcher(date).matches()) {
+            throw new IllegalArgumentException("잘못된 date 형식: " + date + " (YYYY-MM-DD 필요)");
+        }
         return historyDir().resolve(date + ".jsonl");
     }
 

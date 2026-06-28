@@ -262,13 +262,15 @@ public class ScreenCaptureService {
             double y = clamp01(Double.parseDouble(parts[1].trim()));
             double w = clamp01(Double.parseDouble(parts[2].trim()));
             double h = clamp01(Double.parseDouble(parts[3].trim()));
-            int sx = (int) Math.round(x * src.getWidth());
-            int sy = (int) Math.round(y * src.getHeight());
-            int sw = Math.max(1, (int) Math.round(w * src.getWidth()));
-            int sh = Math.max(1, (int) Math.round(h * src.getHeight()));
-            sw = Math.min(sw, src.getWidth() - sx);
-            sh = Math.min(sh, src.getHeight() - sy);
-            return src.getSubimage(sx, sy, sw, sh);
+            // 우/하 엣지 정렬(x+w=1.0)이면 sw=0 이 돼 getSubimage가 throw → catch 에서 원본으로 폴백되어
+            // 사용자가 지정한 영역이 사라짐. origin 을 미리 클램프하고 end 로 폭/높이 산출.
+            int srcW = src.getWidth();
+            int srcH = src.getHeight();
+            int sx = Math.min(srcW - 1, (int) Math.round(x * srcW));
+            int sy = Math.min(srcH - 1, (int) Math.round(y * srcH));
+            int ex = Math.max(sx + 1, Math.min(srcW, (int) Math.round((x + w) * srcW)));
+            int ey = Math.max(sy + 1, Math.min(srcH, (int) Math.round((y + h) * srcH)));
+            return src.getSubimage(sx, sy, ex - sx, ey - sy);
         } catch (Exception e) {
             log.debug("crop-region 적용 실패, 원본 사용: {}", e.getMessage());
             return src;

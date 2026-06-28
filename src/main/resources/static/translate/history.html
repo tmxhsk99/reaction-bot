@@ -48,6 +48,14 @@
     color: #58a6ff;
   }
   .date-item {
+    /* <button> 디폴트 스타일 리셋 — 키보드 접근성 위해 button 으로 만듦 */
+    appearance: none;
+    background: transparent;
+    color: inherit;
+    width: 100%;
+    text-align: left;
+    font: inherit;
+
     display: flex;
     align-items: center;
     gap: 6px;
@@ -58,6 +66,7 @@
     font-size: 14px;
   }
   .date-item:hover { background: #1f2630; }
+  .date-item:focus-visible { outline: 2px solid #58a6ff; outline-offset: -2px; }
   .date-item.active { border-color: #58a6ff; background: #1c2434; }
   .date-item .date { font-family: GalmuriMono11, monospace; }
   .date-item .alias {
@@ -202,11 +211,22 @@ function renderDates(list) {
   }
   dateListEl.innerHTML = '';
   for (const d of list) {
-    const item = document.createElement('div');
+    // 키보드 접근성을 위해 <button> 사용 — Enter/Space 자동 동작.
+    const item = document.createElement('button');
+    item.type = 'button';
     item.className = 'date-item' + (d.date === selectedDate ? ' active' : '');
-    item.innerHTML = '<span class="date">' + escapeHtml(d.date) + '</span>'
-                   + '<span class="alias">' + escapeHtml(d.alias || '') + '</span>'
-                   + '<span class="entries">' + d.entries + '건</span>';
+    const dateSpan = document.createElement('span');
+    dateSpan.className = 'date';
+    dateSpan.textContent = d.date;
+    const aliasSpan = document.createElement('span');
+    aliasSpan.className = 'alias';
+    aliasSpan.textContent = d.alias || '';
+    const entriesSpan = document.createElement('span');
+    entriesSpan.className = 'entries';
+    entriesSpan.textContent = d.entries + '건';
+    item.appendChild(dateSpan);
+    item.appendChild(aliasSpan);
+    item.appendChild(entriesSpan);
     item.addEventListener('click', () => selectDate(d.date, d.alias));
     dateListEl.appendChild(item);
 
@@ -230,6 +250,11 @@ function renderDates(list) {
           body: JSON.stringify({ alias: aliasInput.value }),
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
+        // 현재 선택된 날짜의 별칭이면 우측 타이틀도 같이 갱신.
+        if (d.date === selectedDate) {
+          const newAlias = aliasInput.value.trim();
+          entriesTitleEl.textContent = d.date + (newAlias ? ' — ' + newAlias : '');
+        }
         await loadDates();
       } catch (e) {
         alert('별칭 저장 실패: ' + e.message);

@@ -413,6 +413,12 @@ manualBtn.addEventListener('click', async () => {
 });
 
 document.addEventListener('keydown', (e) => {
+  // 버튼/링크/입력에 포커스 있을 때 Space 가로채면 기본 동작이 깨짐 → 무시
+  const t = e.target;
+  if (t instanceof HTMLElement &&
+      t.closest('button, a, input, textarea, select, [contenteditable="true"]')) {
+    return;
+  }
   if (e.key === 'ArrowLeft' && !prevBtn.disabled) postPage('prev');
   else if (e.key === 'ArrowRight' && !nextBtn.disabled) postPage('next');
   else if (e.key === ' ') { e.preventDefault(); manualBtn.click(); }
