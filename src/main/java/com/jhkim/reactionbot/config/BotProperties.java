@@ -11,6 +11,14 @@ import org.springframework.context.annotation.Configuration;
 @ConfigurationProperties(prefix = "reaction-bot")
 public class BotProperties {
 
+    // 앱 동작 모드. /config UI 최상단에서 선택.
+    //   "reaction-bot"     : 기존 리액션 봇 (STT → LLM → TTS, 화면 캡처 보조)
+    //   "screen-translate" : 화면 번역 모드 (화면 OCR/번역 → /translate UI + TTS)
+    private String mode = "reaction-bot";
+
+    public boolean isScreenTranslateMode() { return "screen-translate".equalsIgnoreCase(mode); }
+    public boolean isReactionBotMode() { return !isScreenTranslateMode(); }
+
     private Character character = new Character();
     private Llm llm = new Llm();
     private Anthropic anthropic = new Anthropic();
@@ -26,6 +34,7 @@ public class BotProperties {
     private Speech speech = new Speech();
     private IdleTrigger idleTrigger = new IdleTrigger();
     private Pokemon pokemon = new Pokemon();
+    private ScreenTranslate screenTranslate = new ScreenTranslate();
 
     @Getter @Setter
     public static class Character {
@@ -320,6 +329,71 @@ public class BotProperties {
         private String pokeapiBase;         // PokeAPI 베이스 URL
         private int cacheTtlSec;
         private Overlay overlay = new Overlay();
+    }
+
+    /**
+     * 화면 번역 모드 설정. reaction-bot.mode=screen-translate 일 때만 의미.
+     * 자동 모드: 주기 캡처 → dHash prefilter → 변화 감지 시 triage LLM(대화 여부) → 메인 LLM 번역 → TTS + /translate UI.
+     * 수동 모드: /translate UI의 번역 버튼 클릭으로 단발 번역 (대상 언어면 무조건 번역).
+     */
+    @Getter @Setter
+    public static class ScreenTranslate {
+        // 소스 언어 (다중 가능). ISO 639-1 코드. "ja", "en", "zh", "ja en" 형식의 토큰 모두 인식.
+        // 대상 언어(target-lang)는 자동 스킵.
+        private java.util.List<String> sourceLangs = new java.util.ArrayList<>(java.util.List.of("ja"));
+        // 번역 결과 언어. 기본 한국어.
+        private String targetLang = "ko";
+        // true=자동 모드(주기 캡처), false=수동 모드(/translate 버튼만 트리거).
+        private boolean autoMode = true;
+        // 자동 모드 캡처 주기 (ms). 너무 짧으면 LLM 비용 폭증. 권장 800~2000.
+        private int intervalMs = 1000;
+        // true면 자동 모드에서 "대화창/캐릭터 대사로 보이는 텍스트만" 번역.
+        // false면 UI 메뉴/시스템 메시지도 다 번역 시도.
+        private boolean dialogueOnly = true;
+        // 번역 결과 TTS 발화 여부. 기존 reaction-bot.tts 설정(voice/rate/pitch) 재사용.
+        private boolean ttsEnabled = true;
+        // 한 페이지에 표시할 줄 수. 더 길면 ▶ 버튼으로 페이징.
+        private int linesPerPage = 2;
+        // 캡처 범위 모드. "fullscreen" | "region"
+        //   fullscreen : 전체 화면을 LLM 에 넘김. 대화창 위치를 LLM이 판단해야 함.
+        //   region     : crop-region 좌표(아래)만 잘라서 넘김. 정확도/속도/비용 모두 우위.
+        private String captureMode = "fullscreen";
+        // 사용자 지정 대화창 영역. "x,y,w,h" 정규화 좌표(0~1). capture-mode=region 일 때만 사용.
+        // /config UI의 "대화창 영역 지정" 버튼이 스크린샷 위에서 드래그한 결과를 여기에 저장.
+        private String cropRegion = "";
+        // triage(변화 감지·대화 판단) 단계의 LLM provider 오버라이드. 빈 값=메인 provider 재사용.
+        // 예: 메인은 claude-cli 쓰면서 triage만 gemini로 분리해 비용 절감.
+        // (현재는 메인 provider 재사용만 구현. 후속에서 분리 시 사용.)
+        private String triageProvider = "";
+        // 화면번역 히스토리 디렉토리. 빈 값이면 cwd 의 "./translation-history".
+        // JSONL (translation-history/YYYY-MM-DD.jsonl) + aliases.json 저장.
+        private String historyDir = "";
+        // 화면이 "단색(검정/흰/로딩)" 으로 판정되는 휘도 stddev 임계.
+        //   stddev < 이 값  → blank 으로 보고 LLM 호출 자체 스킵
+        //   기본 8.0 (reaction-bot 모드와 동일). OBS 검은 씬·로딩 화면 컷.
+        //   문제 진단: /translate/debug 에서 lumaMean/lumaStddev 확인 후 조정.
+        //   값이 클수록 "단색"으로 판정되기 쉬워 더 자주 스킵. 0 으로 두면 사실상 비활성.
+        private double blankLumaStddev = 8.0;
+        // dHash hamming distance 임계. 이 이하면 "같은 화면"으로 간주.
+        // 기본 10 — 안티앨리어싱/압축 노이즈를 흡수하면서도 자막 변화는 감지하는 권장값.
+        // 너무 크면 다른 자막을 같다고 오판, 너무 작으면 미세 변화에도 LLM 호출.
+        private int hashStabilityThreshold = 10;
+        // 2-프레임 안정성 체크. true 면 직전 프레임과 비슷할 때(=화면이 settle)만 LLM 호출.
+        // 캐릭터 이동/카메라 워크처럼 매 프레임이 다른 상태에선 LLM 호출 자체 스킵 → 비용 절감.
+        // false 면 hash 변화 즉시 호출 (구버전 동작).
+        private boolean requireFrameStability = true;
+        // 번역 결과 유사도 dedup 임계 (0~1). 직전 source/translated 와 ratio > 이 값이면 중복 처리.
+        // 1.0 = 완전 일치만 dedup, 0.85 = 약간 다르면(부호/공백 차이) 같이 dedup.
+        // 0 으로 두면 사실상 dedup 비활성.
+        private double translationDedupSimilarity = 0.85;
+        // 최근 번역을 메모리에 보관할 개수 (UI 재생 버튼용). 히스토리 파일과 무관.
+        private int recentBufferSize = 10;
+        // 화면 번역용 LLM 전달 이미지 가로폭(px). reaction-bot 의 672 와 별개.
+        //   672 : reaction-bot 기본 (vision 토큰 절감용. 큰 이벤트 인식엔 충분하지만 자막 글자엔 작음)
+        //   1280 : 화면 번역 권장 (자막 글자 가독성 ↑, vision 토큰은 약 2배)
+        //   1568 : Anthropic 권장 최대 (Claude 가 자동 다운샘플 안 함). 가장 정확하지만 토큰 최대
+        // 원본보다 크면 리사이즈 안 함 (확대 안 함).
+        private int targetWidth = 1280;
     }
 
     /**

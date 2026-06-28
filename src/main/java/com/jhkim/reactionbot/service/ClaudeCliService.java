@@ -533,15 +533,23 @@ public class ClaudeCliService implements LlmProvider {
      */
     @Override
     public String analyzeImage(String systemPrompt, String userPrompt, String base64JpegImage) {
+        return analyzeImage(systemPrompt, userPrompt, base64JpegImage, true);
+    }
+
+    @Override
+    public String analyzeImage(String systemPrompt, String userPrompt,
+                               String base64JpegImage, boolean useTriageModel) {
         BotProperties.ClaudeCli cfg = properties.getClaudeCli();
-        String model = isBlank(cfg.getTriageModel()) ? cfg.getModel() : cfg.getTriageModel();
+        String model = pickModel(cfg, useTriageModel);
 
         Path imagePath = null;
         if (base64JpegImage != null && !base64JpegImage.isBlank()) {
             try {
                 imagePath = writeTempImage(base64JpegImage, cfg.getTempImageDir());
             } catch (Exception e) {
-                log.warn("analyzeImage 임시 스크린샷 저장 실패. 이미지 없이 진행: {}", e.getMessage());
+                // 이미지를 못 만들었는데 text-only 로 다운그레이드하면 LLM 이 화면 안 보고
+                // 환각 JSON 을 뱉을 위험 → fail fast.
+                throw new RuntimeException("analyzeImage 실패: 임시 스크린샷 저장 실패", e);
             }
         }
 
@@ -554,9 +562,9 @@ public class ClaudeCliService implements LlmProvider {
         sb.append(userPrompt);
         String composedUserPrompt = sb.toString();
 
+        String tools = (imagePath != null) ? "Read" : "";
         try {
-            // 본 호출과 동일한 timeout 사용. JSON 추출이 느릴 수 있어 triageTimeout보단 본 timeout이 안전.
-            return callCliCustom(cfg, systemPrompt, composedUserPrompt, model, "Read", cfg.getTimeoutSec());
+            return callCliCustom(cfg, systemPrompt, composedUserPrompt, model, tools, cfg.getTimeoutSec());
         } catch (Exception e) {
             log.warn("analyzeImage CLI 호출 실패: {}", e.getMessage());
             throw new RuntimeException("analyzeImage 실패: " + e.getMessage(), e);
@@ -569,6 +577,26 @@ public class ClaudeCliService implements LlmProvider {
                 }
             }
         }
+    }
+
+    @Override
+    public String analyzeText(String systemPrompt, String userPrompt, boolean useTriageModel) {
+        BotProperties.ClaudeCli cfg = properties.getClaudeCli();
+        String model = pickModel(cfg, useTriageModel);
+        try {
+            // text-only 라 도구 불필요. timeout 은 본 호출과 동일.
+            return callCliCustom(cfg, systemPrompt, userPrompt, model, "", cfg.getTimeoutSec());
+        } catch (Exception e) {
+            log.warn("analyzeText CLI 호출 실패: {}", e.getMessage());
+            throw new RuntimeException("analyzeText 실패: " + e.getMessage(), e);
+        }
+    }
+
+    private static String pickModel(BotProperties.ClaudeCli cfg, boolean useTriageModel) {
+        if (useTriageModel) {
+            return isBlank(cfg.getTriageModel()) ? cfg.getModel() : cfg.getTriageModel();
+        }
+        return cfg.getModel();
     }
 
     // ---------- 프롬프트 합성 ----------

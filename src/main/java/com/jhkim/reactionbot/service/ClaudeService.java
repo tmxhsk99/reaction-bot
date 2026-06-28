@@ -244,10 +244,13 @@ public class ClaudeService implements LlmProvider {
      */
     @Override
     public String analyzeImage(String systemPrompt, String userPrompt, String base64JpegImage) {
-        String model = properties.getAnthropic().getTriageModel();
-        if (model == null || model.isBlank()) {
-            model = properties.getAnthropic().getModel();
-        }
+        return analyzeImage(systemPrompt, userPrompt, base64JpegImage, true);
+    }
+
+    @Override
+    public String analyzeImage(String systemPrompt, String userPrompt,
+                               String base64JpegImage, boolean useTriageModel) {
+        String model = pickModel(useTriageModel);
         List<MessageParam> messages = new ArrayList<>();
         messages.add(buildLastUserMessage(userPrompt, base64JpegImage));
 
@@ -257,9 +260,34 @@ public class ClaudeService implements LlmProvider {
                 .system(systemPrompt)
                 .messages(messages)
                 .build();
-        log.debug("analyzeImage 호출 (model={}, image={})", model, base64JpegImage != null);
+        log.debug("analyzeImage 호출 (model={}, image={}, triage={})", model, base64JpegImage != null, useTriageModel);
         Message response = client.messages().create(params);
         return extractText(response).trim();
+    }
+
+    @Override
+    public String analyzeText(String systemPrompt, String userPrompt, boolean useTriageModel) {
+        String model = pickModel(useTriageModel);
+        List<MessageParam> messages = List.of(
+                MessageParam.builder().role(MessageParam.Role.USER).content(userPrompt).build());
+        MessageCreateParams params = MessageCreateParams.builder()
+                .model(model)
+                .maxTokens((long) properties.getAnthropic().getMaxTokens())
+                .system(systemPrompt)
+                .messages(messages)
+                .build();
+        log.debug("analyzeText 호출 (model={}, triage={})", model, useTriageModel);
+        Message response = client.messages().create(params);
+        return extractText(response).trim();
+    }
+
+    private String pickModel(boolean useTriageModel) {
+        String triage = properties.getAnthropic().getTriageModel();
+        String main = properties.getAnthropic().getModel();
+        if (useTriageModel) {
+            return (triage == null || triage.isBlank()) ? main : triage;
+        }
+        return main;
     }
 
     private String extractText(Message response) {

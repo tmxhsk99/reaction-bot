@@ -20,12 +20,23 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addViewControllers(ViewControllerRegistry registry) {
+        // 홈 (모든 UI / API 진입점 모음)
+        registry.addViewController("/").setViewName("forward:/home/index.html");
+        registry.addViewController("/home").setViewName("forward:/home/index.html");
+        registry.addViewController("/home/").setViewName("forward:/home/index.html");
+
         registry.addViewController("/avatar").setViewName("forward:/avatar/index.html");
         registry.addViewController("/avatar/").setViewName("forward:/avatar/index.html");
         registry.addViewController("/config").setViewName("forward:/config/index.html");
         registry.addViewController("/config/").setViewName("forward:/config/index.html");
         registry.addViewController("/pokemon-overlay").setViewName("forward:/pokemon-overlay/index.html");
         registry.addViewController("/pokemon-overlay/").setViewName("forward:/pokemon-overlay/index.html");
+        registry.addViewController("/translate").setViewName("forward:/translate/index.html");
+        registry.addViewController("/translate/").setViewName("forward:/translate/index.html");
+        registry.addViewController("/translate/history").setViewName("forward:/translate/history.html");
+        registry.addViewController("/translate/history/").setViewName("forward:/translate/history.html");
+        registry.addViewController("/translate/debug").setViewName("forward:/translate/debug.html");
+        registry.addViewController("/translate/debug/").setViewName("forward:/translate/debug.html");
     }
 
     @Override
@@ -57,5 +68,21 @@ public class WebConfig implements WebMvcConfigurer {
         registry.addResourceHandler("/pokemon-overlay/**")
                 .addResourceLocations("classpath:/static/pokemon-overlay/")
                 .setCachePeriod(0);
+
+        // 홈 (랜딩 페이지) 정적 리소스. 캐싱 끔 — 메뉴 자주 바뀔 수 있음.
+        registry.addResourceHandler("/home/**")
+                .addResourceLocations("classpath:/static/home/")
+                .setCachePeriod(0);
+
+        // 화면 번역 모드 정적 리소스 (대화창 UI + 히스토리 페이지). 캐싱 끔.
+        registry.addResourceHandler("/translate/**")
+                .addResourceLocations("classpath:/static/translate/")
+                .setCachePeriod(0);
+
+        // Galmuri 픽셀 폰트 (woff2). /font/galmuri/Galmuri11.woff2 등으로 접근.
+        // 폰트는 자주 안 바뀌므로 캐싱 1일.
+        registry.addResourceHandler("/font/galmuri/**")
+                .addResourceLocations("classpath:/font/galmuri/")
+                .setCachePeriod(86400);
     }
 }

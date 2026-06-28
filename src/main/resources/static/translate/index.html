@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>화면 번역</title>
+<link rel="stylesheet" href="/font/galmuri/galmuri.css">
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: transparent;
+    color: #1a1a1a;
+    font-family: Galmuri11, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    -webkit-font-smoothing: none;
+    image-rendering: pixelated;
+  }
+  body {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-end;
+    padding: 24px;
+    gap: 12px;
+  }
+  /* 상태 표시줄 (작게) */
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-family: Galmuri9, sans-serif;
+    font-size: 14px;
+    color: #cdd5e0;
+    background: rgba(0,0,0,0.3);
+    padding: 6px 10px;
+    border-radius: 4px;
+  }
+  .topbar .grow { flex: 1; }
+  .topbar a { color: #8fb8ff; text-decoration: none; }
+  .topbar a:hover { text-decoration: underline; }
+  .topbar .err { color: #ff8888; }
+  .topbar button {
+    font-family: Galmuri11, sans-serif;
+    font-size: 14px;
+    background: #f4d03f;
+    color: #1a1a1a;
+    border: 2px solid #1a1a1a;
+    padding: 4px 12px;
+    cursor: pointer;
+    box-shadow: 2px 2px 0 #1a1a1a;
+  }
+  .topbar button:hover { background: #f7dc6f; }
+  .topbar button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* 대화 박스 (포켓몬 스타일) */
+  .dialog {
+    background: #ffffff;
+    border: 4px solid #1a1a1a;
+    border-radius: 6px;
+    padding: 18px 24px 36px 24px;
+    position: relative;
+    box-shadow: 0 0 0 2px #ffffff, 6px 6px 0 #1a1a1a;
+    min-height: 140px;
+    max-width: 960px;
+    width: 100%;
+    margin: 0 auto;
+  }
+  .dialog::before, .dialog::after {
+    /* 안쪽 라인 (포켓몬 박스 더블 보더 흉내) */
+    content: "";
+    position: absolute;
+    border: 1px solid #1a1a1a;
+    border-radius: 3px;
+    pointer-events: none;
+  }
+  .dialog::before { inset: 4px; }
+  .speaker {
+    font-family: Galmuri11, sans-serif;
+    font-weight: 700;
+    font-size: 28px;
+    margin-bottom: 8px;
+    color: #d62828;
+  }
+  .lines {
+    font-family: Galmuri11, sans-serif;
+    font-size: 24px;            /* 스펙 기본 24px */
+    line-height: 1.45;
+    min-height: 2.9em;          /* 2줄 분량 확보 */
+    color: #1a1a1a;
+    white-space: pre-wrap;
+    word-break: keep-all;
+  }
+  .line + .line { margin-top: 2px; }
+  .source {
+    margin-top: 14px;
+    font-family: Galmuri9, sans-serif;
+    font-size: 14px;
+    color: #6c757d;
+    border-top: 1px dashed #adb5bd;
+    padding-top: 8px;
+    white-space: pre-wrap;
+    word-break: keep-all;
+  }
+  .pager {
+    position: absolute;
+    bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .pager.left { left: 12px; }
+  .pager.right { right: 12px; }
+  .pager button {
+    font-family: Galmuri11, sans-serif;
+    font-size: 18px;
+    background: transparent;
+    border: 2px solid #1a1a1a;
+    color: #1a1a1a;
+    padding: 2px 10px;
+    cursor: pointer;
+    box-shadow: 2px 2px 0 #1a1a1a;
+  }
+  .pager button:hover:not(:disabled) { background: #ffeaa7; }
+  .pager button:disabled { opacity: 0.3; cursor: not-allowed; box-shadow: none; }
+  .pager .page-idx {
+    font-family: Galmuri9, sans-serif;
+    font-size: 14px;
+    color: #495057;
+    margin: 0 2px;
+  }
+  .empty {
+    font-family: Galmuri9, sans-serif;
+    color: #6c757d;
+    font-size: 18px;
+  }
+  /* 토글 버튼 (자동 ON/OFF) */
+  .topbar button.toggle-on {
+    background: #56d364;
+    color: #1a1a1a;
+  }
+  .topbar button.toggle-off {
+    background: #6e7681;
+    color: #e6edf3;
+  }
+  /* 최근 번역 리스트 */
+  .recent {
+    margin: 16px auto 0;
+    max-width: 960px;
+    width: 100%;
+    background: rgba(0,0,0,0.35);
+    border-radius: 6px;
+    padding: 10px 12px;
+  }
+  .recent h3 {
+    font-family: Galmuri9, sans-serif;
+    color: #cdd5e0;
+    font-size: 13px;
+    margin: 0 0 6px;
+  }
+  .recent .row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .recent .row:last-child { border-bottom: none; }
+  .recent .row .spk {
+    font-family: Galmuri11, sans-serif;
+    font-weight: 700;
+    color: #f7c873;
+    font-size: 14px;
+    min-width: 80px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .recent .row .txt {
+    flex: 1;
+    font-family: Galmuri11, sans-serif;
+    font-size: 15px;
+    color: #e6edf3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .recent .row button {
+    font-family: Galmuri11, sans-serif;
+    font-size: 14px;
+    background: #1f6feb;
+    color: white;
+    border: none;
+    padding: 3px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .recent .row button:hover { background: #388bfd; }
+  .recent .row button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .recent .empty-row {
+    font-family: Galmuri9, sans-serif;
+    color: #6c757d;
+    font-size: 13px;
+    padding: 6px 8px;
+  }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <span id="mode-label">대기 중…</span>
+    <span class="grow"></span>
+    <span id="error" class="err"></span>
+    <button id="auto-toggle-btn" type="button" title="자동 번역 ON/OFF — 이동/전투 중엔 OFF 권장">자동 …</button>
+    <button id="manual-btn" type="button">번역 (수동)</button>
+    <a href="/">← 홈</a>
+    <a href="/translate/debug">진단 →</a>
+    <a href="/translate/history">히스토리 →</a>
+  </div>
+
+  <div class="dialog" id="dialog">
+    <div class="speaker" id="speaker"></div>
+    <div class="lines" id="lines"><span class="empty">아직 번역된 대사가 없습니다.</span></div>
+    <div class="source" id="source" style="display:none;"></div>
+    <div class="pager left">
+      <button id="prev-btn" type="button" title="이전 페이지">◀</button>
+    </div>
+    <div class="pager right">
+      <span class="page-idx" id="page-idx"></span>
+      <button id="next-btn" type="button" title="다음 페이지">▶</button>
+    </div>
+  </div>
+
+  <div class="recent">
+    <h3>최근 번역 (재생 가능, 메모리 only — 히스토리 페이지엔 별도 보관)</h3>
+    <div id="recent-list"><div class="empty-row">아직 없음.</div></div>
+  </div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const speakerEl = $('speaker');
+const linesEl = $('lines');
+const sourceEl = $('source');
+const prevBtn = $('prev-btn');
+const nextBtn = $('next-btn');
+const manualBtn = $('manual-btn');
+const autoToggleBtn = $('auto-toggle-btn');
+const recentListEl = $('recent-list');
+const errEl = $('error');
+const pageIdxEl = $('page-idx');
+const modeLabel = $('mode-label');
+
+let cur = null;   // 현재 state
+
+function render(st) {
+  cur = st;
+  errEl.textContent = st.lastError || '';
+  modeLabel.textContent = st.enabled
+      ? (st.autoMode ? '자동 모드 · ' + (st.captureMode === 'region' ? '대화창 영역' : '전체화면')
+                     : '수동 모드')
+      : '비활성 (mode=screen-translate 가 아님)';
+
+  // 자동 토글 버튼 — cfg.autoMode=false 면 비활성 표시
+  if (!st.autoMode) {
+    autoToggleBtn.textContent = '자동 OFF (수동 전용)';
+    autoToggleBtn.className = 'toggle-off';
+    autoToggleBtn.disabled = true;
+  } else {
+    autoToggleBtn.disabled = false;
+    if (st.autoRuntime) {
+      autoToggleBtn.textContent = '자동 ON';
+      autoToggleBtn.className = 'toggle-on';
+    } else {
+      autoToggleBtn.textContent = '자동 OFF';
+      autoToggleBtn.className = 'toggle-off';
+    }
+  }
+
+  // 최근 번역 리스트
+  renderRecent(st.recent || []);
+
+  if (!st.entry) {
+    speakerEl.textContent = '';
+    linesEl.innerHTML = '<span class="empty">아직 번역된 대사가 없습니다.</span>';
+    sourceEl.style.display = 'none';
+    pageIdxEl.textContent = '';
+    prevBtn.disabled = true;
+    nextBtn.disabled = true;
+    return;
+  }
+  const e = st.entry;
+  speakerEl.textContent = e.speaker || '';
+  speakerEl.style.display = e.speaker ? 'block' : 'none';
+
+  const lpp = Math.max(1, st.linesPerPage);
+  const start = st.pageIndex * lpp;
+  const visible = e.lines.slice(start, start + lpp);
+  linesEl.innerHTML = visible.map(l => '<div class="line">' + escapeHtml(l) + '</div>').join('');
+
+  if (e.source) {
+    sourceEl.style.display = 'block';
+    sourceEl.textContent = '원문: ' + e.source;
+  } else {
+    sourceEl.style.display = 'none';
+  }
+
+  pageIdxEl.textContent = (st.totalPages > 1)
+      ? ((st.pageIndex + 1) + ' / ' + st.totalPages) : '';
+  prevBtn.disabled = st.pageIndex <= 0;
+  nextBtn.disabled = st.pageIndex >= st.totalPages - 1;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => (
+    { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]
+  ));
+}
+
+async function loadInitial() {
+  try {
+    const res = await fetch('/api/translate/state');
+    if (res.ok) render(await res.json());
+  } catch (e) { /* SSE 가 곧 들어옴 */ }
+}
+
+function connectSse() {
+  const es = new EventSource('/api/translate/events');
+  es.addEventListener('state', (ev) => {
+    try { render(JSON.parse(ev.data)); } catch (e) { console.warn(e); }
+  });
+  es.onerror = () => {
+    // 끊기면 5초 뒤 재시도
+    es.close();
+    setTimeout(connectSse, 5000);
+  };
+}
+
+async function postPage(direction) {
+  const res = await fetch('/api/translate/page?direction=' + direction, { method: 'POST' });
+  if (res.ok) render(await res.json());
+}
+
+function renderRecent(items) {
+  if (!items || items.length === 0) {
+    recentListEl.innerHTML = '<div class="empty-row">아직 없음.</div>';
+    return;
+  }
+  recentListEl.innerHTML = '';
+  for (const e of items) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const spk = document.createElement('span');
+    spk.className = 'spk';
+    spk.textContent = e.speaker || '(미상)';
+    const txt = document.createElement('span');
+    txt.className = 'txt';
+    txt.textContent = e.translated || '';
+    txt.title = e.translated || '';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = '▶ 재생';
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '재생 중…';
+      try {
+        const res = await fetch('/api/translate/replay?id=' + encodeURIComponent(e.id), { method: 'POST' });
+        const body = await res.json().catch(() => ({}));
+        if (body.status !== 'ok') {
+          alert('재생 실패: ' + (body.message || res.status));
+        }
+      } finally {
+        setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 800);
+      }
+    });
+    row.appendChild(spk);
+    row.appendChild(txt);
+    row.appendChild(btn);
+    recentListEl.appendChild(row);
+  }
+}
+
+autoToggleBtn.addEventListener('click', async () => {
+  autoToggleBtn.disabled = true;
+  try {
+    const res = await fetch('/api/translate/auto-toggle', { method: 'POST' });
+    const body = await res.json().catch(() => ({}));
+    if (body.status !== 'ok') {
+      alert('토글 실패: ' + (body.message || res.status));
+    }
+    // SSE 가 곧 state 푸시할 것이므로 render() 가 버튼 상태 갱신
+  } finally {
+    setTimeout(() => { autoToggleBtn.disabled = false; }, 300);
+  }
+});
+
+prevBtn.addEventListener('click', () => postPage('prev'));
+nextBtn.addEventListener('click', () => postPage('next'));
+
+manualBtn.addEventListener('click', async () => {
+  manualBtn.disabled = true;
+  manualBtn.textContent = '번역 중…';
+  try {
+    const res = await fetch('/api/translate/manual', { method: 'POST' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.status === 'error') {
+      errEl.textContent = '수동 번역 실패: ' + (body.message || res.status);
+    }
+  } finally {
+    setTimeout(() => {
+      manualBtn.disabled = false;
+      manualBtn.textContent = '번역 (수동)';
+    }, 1500);
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  // 버튼/링크/입력에 포커스 있을 때 Space 가로채면 기본 동작이 깨짐 → 무시
+  const t = e.target;
+  if (t instanceof HTMLElement &&
+      t.closest('button, a, input, textarea, select, [contenteditable="true"]')) {
+    return;
+  }
+  if (e.key === 'ArrowLeft' && !prevBtn.disabled) postPage('prev');
+  else if (e.key === 'ArrowRight' && !nextBtn.disabled) postPage('next');
+  else if (e.key === ' ') { e.preventDefault(); manualBtn.click(); }
+});
+
+loadInitial();
+connectSse();
+</script>
+</body>
+</html>

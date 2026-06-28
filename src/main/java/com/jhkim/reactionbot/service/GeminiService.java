@@ -270,4 +270,43 @@ public class GeminiService implements LlmProvider {
             history.popLast();
         }
     }
+
+    // ---------- 화면 번역 / 단발 vision/text 호출 ----------
+
+    @Override
+    public String analyzeImage(String systemPrompt, String userPrompt, String base64JpegImage) {
+        return analyzeImage(systemPrompt, userPrompt, base64JpegImage, true);
+    }
+
+    @Override
+    public String analyzeImage(String systemPrompt, String userPrompt,
+                               String base64JpegImage, boolean useTriageModel) {
+        return callRaw(pickModel(useTriageModel), systemPrompt, userPrompt, base64JpegImage, useTriageModel);
+    }
+
+    @Override
+    public String analyzeText(String systemPrompt, String userPrompt, boolean useTriageModel) {
+        return callRaw(pickModel(useTriageModel), systemPrompt, userPrompt, null, useTriageModel);
+    }
+
+    private String pickModel(boolean useTriageModel) {
+        String triage = properties.getGemini().getTriageModel();
+        String main = properties.getGemini().getModel();
+        if (useTriageModel) return (triage == null || triage.isBlank()) ? main : triage;
+        return main;
+    }
+
+    /** 페르소나/히스토리/nudge 미적용. systemPrompt+userPrompt(+image) 만으로 단발 호출. */
+    private String callRaw(String model, String systemPrompt, String userPrompt,
+                           String base64JpegImage, boolean useTriageModel) {
+        List<Content> contents = List.of(buildUserContent(userPrompt, base64JpegImage));
+        GenerateContentConfig config = GenerateContentConfig.builder()
+                .systemInstruction(Content.fromParts(Part.fromText(systemPrompt)))
+                .maxOutputTokens(properties.getGemini().getMaxTokens())
+                .thinkingConfig(ThinkingConfig.builder().thinkingBudget(0).build())
+                .build();
+        log.debug("Gemini raw 호출 (model={}, image={}, triage={})", model, base64JpegImage != null, useTriageModel);
+        GenerateContentResponse response = client.models.generateContent(model, contents, config);
+        return safeText(response).trim();
+    }
 }

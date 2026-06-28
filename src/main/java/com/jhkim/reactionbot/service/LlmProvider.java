@@ -65,13 +65,38 @@ public interface LlmProvider {
     /**
      * 캐릭터 페르소나·히스토리·트리아지 다 무시하고 단발 vision 호출.
      * 포켓몬 오버레이처럼 발화 흐름과 무관한 raw 분석용. 호출자가 준 systemPrompt만 사용.
+     * 기본적으로 triage 모델을 사용 (저렴 모델 우선).
      *
-     * 기본 구현은 미지원 — provider별로 필요 시 override. 미지원 provider 사용 시 호출자가
-     * UnsupportedOperationException 잡아 "이 provider는 raw vision 미지원" 안내 표시.
+     * 기본 구현은 미지원 — provider별로 필요 시 override.
      */
     default String analyzeImage(String systemPrompt, String userPrompt, String base64JpegImage) {
         throw new UnsupportedOperationException(
-                "analyzeImage가 이 LLM provider에는 구현되지 않았습니다. "
-              + "Anthropic API 또는 Claude Code CLI provider를 사용해 주세요.");
+                "analyzeImage가 이 LLM provider에는 구현되지 않았습니다.");
+    }
+
+    /**
+     * vision 단발 호출 + 모델 선택. 화면 번역 모드의 stage 1 (triage 모델로 화면 분석) 용도.
+     *
+     * @param useTriageModel true=triage 모델 사용(저렴), false=메인 모델 사용(고품질).
+     *                       triage 모델이 미설정인 provider 는 메인 모델로 폴백.
+     *                       triage/main 분리가 없는 provider(ollama 등)는 둘 다 단일 모델.
+     */
+    default String analyzeImage(String systemPrompt, String userPrompt,
+                                String base64JpegImage, boolean useTriageModel) {
+        // 기본 구현은 useTriageModel=true 일 때만 기존 3-arg analyzeImage 위임. false면 미지원으로 보고.
+        if (useTriageModel) {
+            return analyzeImage(systemPrompt, userPrompt, base64JpegImage);
+        }
+        throw new UnsupportedOperationException(
+                "analyzeImage(useTriageModel=false)이 이 provider 에 구현되지 않았습니다.");
+    }
+
+    /**
+     * text-only 단발 호출. 화면 번역 모드의 stage 2 (메인 모델로 source → translated 번역) 용도.
+     * 이미지 없이 시스템/유저 프롬프트만으로 호출. provider 의 model/triageModel 선택은 useTriageModel 로 결정.
+     */
+    default String analyzeText(String systemPrompt, String userPrompt, boolean useTriageModel) {
+        throw new UnsupportedOperationException(
+                "analyzeText가 이 LLM provider에는 구현되지 않았습니다.");
     }
 }

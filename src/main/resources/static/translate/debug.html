@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>화면 번역 — 캡처 진단</title>
+<link rel="stylesheet" href="/font/galmuri/galmuri.css">
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: Galmuri11, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    background: #0e1116;
+    color: #e6edf3;
+    margin: 0;
+    padding: 20px;
+    image-rendering: pixelated;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub {
+    font-family: Galmuri9, sans-serif;
+    color: #8b949e;
+    font-size: 13px;
+    margin-bottom: 16px;
+  }
+  .sub a { color: #58a6ff; text-decoration: none; margin-right: 12px; }
+  .sub a:hover { text-decoration: underline; }
+  .panel {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 14px;
+    margin-bottom: 14px;
+  }
+  .panel h2 { margin: 0 0 10px; font-size: 14px; color: #58a6ff; }
+  .stats {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 4px 12px;
+    font-family: GalmuriMono11, monospace;
+    font-size: 13px;
+  }
+  .stats .k { color: #8b949e; }
+  .stats .v { color: #e6edf3; }
+  .stats .v.warn { color: #f0c674; }
+  .stats .v.err { color: #f85149; }
+  .stats .v.ok { color: #56d364; }
+  .imgwrap {
+    text-align: center;
+    background: #0d1117;
+    border: 1px solid #21262d;
+    border-radius: 4px;
+    padding: 8px;
+    margin-top: 8px;
+  }
+  .imgwrap img { max-width: 100%; height: auto; image-rendering: auto; }
+  .imgwrap .empty {
+    font-family: Galmuri9, sans-serif;
+    color: #6e7681;
+    padding: 40px;
+  }
+  .controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .controls button {
+    background: #238636;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+  }
+  .controls button:hover { background: #2ea043; }
+  .controls label {
+    font-family: Galmuri9, sans-serif;
+    color: #8b949e;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .diag-msg {
+    font-family: Galmuri9, sans-serif;
+    color: #f0c674;
+    font-size: 13px;
+    margin-top: 6px;
+  }
+  .err-box {
+    background: #3a0a0a;
+    color: #f85149;
+    border: 1px solid #da3633;
+    padding: 10px;
+    border-radius: 4px;
+    font-family: GalmuriMono11, monospace;
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>화면 번역 — 캡처 진단</h1>
+  <p class="sub">
+    <a href="/">← 홈</a>
+    <a href="/translate/">← 실시간 번역</a>
+    <a href="/translate/history">히스토리</a>
+    <a href="/config">설정 →</a>
+  </p>
+
+  <div class="controls">
+    <button id="refresh-btn" type="button">지금 새로고침</button>
+    <label><input type="checkbox" id="auto-cb" checked> 자동 새로고침 (1.5s)</label>
+    <span id="last-ts" style="font-family:Galmuri9,sans-serif;color:#6e7681;font-size:12px;"></span>
+  </div>
+
+  <div class="panel">
+    <h2>현재 캡처 (LLM 에 전달되는 처리 후 이미지)</h2>
+    <div class="stats" id="stats"></div>
+    <div id="diag-msg" class="diag-msg"></div>
+    <div class="imgwrap" id="imgwrap"><div class="empty">불러오는 중…</div></div>
+  </div>
+
+  <div class="panel">
+    <h2>파이프라인 마지막 실행 (자동 모드 진단)</h2>
+    <div class="stats" id="pipeline-stats"></div>
+    <div id="pipeline-msg" class="diag-msg" style="margin-top:6px;"></div>
+    <details style="margin-top:8px;">
+      <summary style="font-family:Galmuri9,sans-serif;font-size:13px;color:#8b949e;cursor:pointer;">Stage 1 / Stage 2 LLM raw 응답 (앞 200자)</summary>
+      <div style="margin-top:6px;font-family:GalmuriMono11,monospace;font-size:12px;color:#cdd5e0;">
+        <div style="margin-bottom:6px;"><strong style="color:#58a6ff;">Stage 1 raw:</strong> <pre id="pl-s1-raw" style="white-space:pre-wrap;margin:4px 0;background:#0d1117;padding:6px;border-radius:3px;">-</pre></div>
+        <div><strong style="color:#58a6ff;">Stage 2 raw:</strong> <pre id="pl-s2-raw" style="white-space:pre-wrap;margin:4px 0;background:#0d1117;padding:6px;border-radius:3px;">-</pre></div>
+      </div>
+    </details>
+  </div>
+
+  <div class="panel">
+    <h2>해석 가이드</h2>
+    <ul style="font-family:Galmuri9,sans-serif;font-size:13px;color:#adbac7;line-height:1.6;">
+      <li><strong>blank: true</strong> + mean=0 stddev=0 → 캡처 자체가 검정. OBS 미연결 / 잘못된 씬 / 모니터 인덱스 문제.</li>
+      <li><strong>blank: true</strong>인데 이미지는 보임 → blank-luma-stddev 가 너무 높음. /config 에서 낮추거나 0 으로 비활성.</li>
+      <li><strong>blank: false</strong> + 이미지 OK → 캡처 정상. LLM 단계 문제. /api/translate/state 응답 확인.</li>
+      <li><strong>dhashHex</strong> 가 매번 동일 → 화면이 안 바뀜(또는 캡처가 정지). 같은 hash 면 LLM 호출 자체 스킵됨.</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+const refreshBtn = document.getElementById('refresh-btn');
+const autoCb = document.getElementById('auto-cb');
+const statsEl = document.getElementById('stats');
+const diagMsgEl = document.getElementById('diag-msg');
+const imgwrapEl = document.getElementById('imgwrap');
+const lastTsEl = document.getElementById('last-ts');
+
+let autoTimer = null;
+let lastDhash = null;
+let loadInFlight = false;   // capture + pipeline 폴링 중복 방지
+
+function fmtNum(v, digits) {
+  if (v == null) return '-';
+  return Number(v).toFixed(digits == null ? 2 : digits);
+}
+
+function setStat(k, v, cls) {
+  const row = document.createElement('div');
+  row.className = 'k';
+  row.textContent = k;
+  const val = document.createElement('div');
+  val.className = 'v' + (cls ? ' ' + cls : '');
+  val.textContent = v;
+  statsEl.appendChild(row);
+  statsEl.appendChild(val);
+}
+
+function render(data) {
+  statsEl.innerHTML = '';
+  diagMsgEl.textContent = '';
+  if (data.status !== 'ok') {
+    statsEl.innerHTML = '';
+    imgwrapEl.innerHTML = '<div class="err-box">' + (data.message || 'unknown') + '</div>';
+    return;
+  }
+  setStat('source', data.source);
+  setStat('capture mode', data.captureMode);
+  setStat('crop region', data.cropRegion || '(none — fullscreen)');
+  setStat('raw size', data.rawWidth + ' x ' + data.rawHeight);
+  setStat('processed size', data.processedWidth + ' x ' + data.processedHeight);
+  setStat('luma mean', fmtNum(data.lumaMean));
+  const stddevCls = data.lumaStddev < data.blankThreshold ? 'warn' : 'ok';
+  setStat('luma stddev', fmtNum(data.lumaStddev), stddevCls);
+  setStat('blank threshold', fmtNum(data.blankThreshold));
+  setStat('blank?', String(data.blank), data.blank ? 'err' : 'ok');
+  setStat('dhash', data.dhashHex);
+  if (lastDhash != null && lastDhash === data.dhashHex) {
+    setStat('dhash 변화', '(직전과 동일)', 'warn');
+  } else if (lastDhash != null) {
+    setStat('dhash 변화', '(변경됨)', 'ok');
+  }
+  lastDhash = data.dhashHex;
+
+  // 메시지
+  if (data.blank && data.lumaStddev === 0 && data.lumaMean === 0) {
+    diagMsgEl.textContent = '⚠ 캡처 자체가 완전 검정 입니다. OBS WebSocket 연결 / 송출 씬 / 모니터 인덱스 확인.';
+  } else if (data.blank) {
+    diagMsgEl.textContent = '⚠ blank 으로 판정 — LLM 호출 스킵됨. /config 에서 blank-luma-stddev 를 낮추거나 0 으로.';
+  } else {
+    diagMsgEl.textContent = '✓ 정상 캡처. blank 아님.';
+  }
+
+  if (data.processedImageBase64Png) {
+    imgwrapEl.innerHTML = '<img src="data:image/png;base64,' + data.processedImageBase64Png + '" alt="">';
+  } else {
+    imgwrapEl.innerHTML = '<div class="empty">이미지 없음</div>';
+  }
+  lastTsEl.textContent = '마지막: ' + new Date().toLocaleTimeString('ko-KR', { hour12: false });
+}
+
+async function load() {
+  // 직전 cycle 이 아직 진행 중이면 skip — OBS/LLM 응답 지연 시 요청 누적 방지.
+  if (loadInFlight) return;
+  loadInFlight = true;
+  try {
+    const res = await fetch('/api/translate/debug/capture', { cache: 'no-store' });
+    const body = await res.json();
+    render(body);
+  } catch (e) {
+    statsEl.innerHTML = '';
+    imgwrapEl.innerHTML = '<div class="err-box">fetch 실패: ' + e.message + '</div>';
+  } finally {
+    try { await loadPipeline(); } catch (_) {}
+    loadInFlight = false;
+  }
+}
+
+const plStatsEl = document.getElementById('pipeline-stats');
+const plMsgEl = document.getElementById('pipeline-msg');
+const plS1RawEl = document.getElementById('pl-s1-raw');
+const plS2RawEl = document.getElementById('pl-s2-raw');
+
+function plSetStat(k, v, cls) {
+  const row = document.createElement('div');
+  row.className = 'k';
+  row.textContent = k;
+  const val = document.createElement('div');
+  val.className = 'v' + (cls ? ' ' + cls : '');
+  val.textContent = v == null ? '-' : v;
+  plStatsEl.appendChild(row);
+  plStatsEl.appendChild(val);
+}
+
+const STAGE_CLASS = {
+  'ok': 'ok',
+  'mode-off': 'err', 'auto-cfg-off': 'err', 'auto-runtime-off': 'warn',
+  'busy': 'warn', 'capture-fail': 'err', 'blank': 'warn',
+  'first-frame': 'warn',
+  'movement-skip': 'warn', 'same-stable': 'warn',
+  'stage1-unsupported': 'err', 'stage1-fail': 'err', 'stage1-skip': 'warn',
+  'source-dedup': 'warn',
+  'stage2-unsupported': 'err', 'stage2-fail': 'err', 'stage2-blank': 'warn',
+  'translated-dedup': 'warn',
+  'idle': 'warn',
+};
+
+async function loadPipeline() {
+  try {
+    const res = await fetch('/api/translate/debug/pipeline', { cache: 'no-store' });
+    const d = await res.json();
+    plStatsEl.innerHTML = '';
+    plMsgEl.textContent = '';
+
+    plSetStat('마지막 stage', d.stage, STAGE_CLASS[d.stage] || '');
+    plSetStat('마지막 시각', d.ts || '(아직 없음)');
+    plSetStat('mode == screen-translate?', String(d.modeOk), d.modeOk ? 'ok' : 'err');
+    plSetStat('cfg.autoMode', String(d.autoCfg), d.autoCfg ? 'ok' : 'warn');
+    plSetStat('autoRuntime 토글', String(d.autoRuntime), d.autoRuntime ? 'ok' : 'warn');
+    if (d.dhashHex != null) plSetStat('현재 dhash', d.dhashHex);
+    if (d.hammingFromPrev != null) plSetStat('hamming(prev)', d.hammingFromPrev);
+    if (d.hammingFromStable != null) plSetStat('hamming(stable)', d.hammingFromStable);
+    if (d.stage1Speaker != null) plSetStat('stage1 speaker', d.stage1Speaker || '(빈값)');
+    if (d.stage1Source != null) plSetStat('stage1 source', d.stage1Source || '(빈값)');
+    if (d.stage1Lang != null) plSetStat('stage1 lang', d.stage1Lang || '(빈값)');
+    plSetStat('─ 누적 카운터 ─', '');
+    plSetStat('tick / runOnce', d.tickCount + ' / ' + d.runCount);
+    plSetStat('stage1 호출 / stage2 호출', d.stage1Calls + ' / ' + d.stage2Calls);
+    plSetStat('번역 생성 / TTS 큐잉', d.entriesProduced + ' / ' + d.ttsEnqueued);
+
+    plMsgEl.textContent = d.reason || '';
+
+    plS1RawEl.textContent = d.stage1RawPreview || '-';
+    plS2RawEl.textContent = d.stage2RawPreview || '-';
+  } catch (e) {
+    plStatsEl.innerHTML = '';
+    plMsgEl.textContent = 'pipeline fetch 실패: ' + e.message;
+  }
+}
+
+function startAuto() {
+  if (autoTimer) clearInterval(autoTimer);
+  if (autoCb.checked) {
+    autoTimer = setInterval(load, 1500);
+  }
+}
+
+refreshBtn.addEventListener('click', load);
+autoCb.addEventListener('change', startAuto);
+
+load();
+startAuto();
+</script>
+</body>
+</html>

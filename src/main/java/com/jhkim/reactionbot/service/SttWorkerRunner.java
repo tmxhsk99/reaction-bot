@@ -40,6 +40,10 @@ public class SttWorkerRunner {
 
     @EventListener(ApplicationReadyEvent.class)
     public void start() {
+        if (properties.isScreenTranslateMode()) {
+            log.info("STT 워커 시작 스킵 — mode=screen-translate (마이크 미사용)");
+            return;
+        }
         BotProperties.Stt stt = properties.getStt();
         if (!stt.isAutoStart()) {
             log.info("STT 워커 자동 시작 비활성화 (reaction-bot.stt.auto-start=false)");

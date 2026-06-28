@@ -35,6 +35,7 @@ public class UserConfigService {
 
     // UI에서 편집 가능한 키 (화이트리스트)
     private static final List<String> EDITABLE_KEYS = List.of(
+            "reaction-bot.mode",
             "reaction-bot.llm.provider",
             "reaction-bot.anthropic.api-key",
             "reaction-bot.gemini.api-key",
@@ -64,7 +65,23 @@ public class UserConfigService {
             "reaction-bot.pokemon.overlay.mode",
             "reaction-bot.pokemon.overlay.refresh-interval-ms",
             "reaction-bot.pokemon.overlay.max-pokemon",
-            "reaction-bot.pokemon.overlay.infer-moves"
+            "reaction-bot.pokemon.overlay.infer-moves",
+            "reaction-bot.screen-translate.source-langs",
+            "reaction-bot.screen-translate.target-lang",
+            "reaction-bot.screen-translate.auto-mode",
+            "reaction-bot.screen-translate.interval-ms",
+            "reaction-bot.screen-translate.dialogue-only",
+            "reaction-bot.screen-translate.tts-enabled",
+            "reaction-bot.screen-translate.lines-per-page",
+            "reaction-bot.screen-translate.capture-mode",
+            "reaction-bot.screen-translate.crop-region",
+            "reaction-bot.screen-translate.blank-luma-stddev",
+            "reaction-bot.screen-translate.hash-stability-threshold",
+            "reaction-bot.screen-translate.require-frame-stability",
+            "reaction-bot.screen-translate.translation-dedup-similarity",
+            "reaction-bot.screen-translate.target-width",
+            "reaction-bot.screen-translate.recent-buffer-size",
+            "reaction-bot.screen-translate.history-dir"
     );
 
     // 빈 문자열로의 변경을 허용하는 키. (기본 정책은 빈 값=변경 안 함 이지만 텍스트영역/경로는 지워서 자동 탐색 복귀 가능해야 함)
@@ -74,7 +91,11 @@ public class UserConfigService {
             "reaction-bot.character.custom-rules",
             "reaction-bot.claude-cli.executable",
             "reaction-bot.claude-cli.executable-search-dir",
-            "reaction-bot.codex-cli.executable"
+            "reaction-bot.codex-cli.executable",
+            // crop-region 은 ""=fullscreen fallback 으로 되돌리는 의미
+            "reaction-bot.screen-translate.crop-region",
+            // history-dir 는 ""=cwd ./translation-history 폴백
+            "reaction-bot.screen-translate.history-dir"
     );
 
     // 빈 값으로 보내면 "변경 안 함"이 아니라 키 자체를 지워서 null/기본값으로 되돌리는 키.
@@ -100,6 +121,7 @@ public class UserConfigService {
     /** UI 표시용 — 현재 값(런타임 BotProperties 기준), 시크릿은 마스킹. */
     public Map<String, Object> readForUi() {
         Map<String, Object> out = new LinkedHashMap<>();
+        out.put("reaction-bot.mode", safe(properties.getMode()));
         out.put("reaction-bot.llm.provider", safe(properties.getLlm().getProvider()));
         out.put("reaction-bot.anthropic.api-key", maskSecret(safe(properties.getAnthropic().getApiKey())));
         out.put("reaction-bot.gemini.api-key", maskSecret(safe(properties.getGemini().getApiKey())));
@@ -131,6 +153,23 @@ public class UserConfigService {
         out.put("reaction-bot.pokemon.overlay.refresh-interval-ms", properties.getPokemon().getOverlay().getRefreshIntervalMs());
         out.put("reaction-bot.pokemon.overlay.max-pokemon", properties.getPokemon().getOverlay().getMaxPokemon());
         out.put("reaction-bot.pokemon.overlay.infer-moves", properties.getPokemon().getOverlay().isInferMoves());
+        BotProperties.ScreenTranslate st = properties.getScreenTranslate();
+        out.put("reaction-bot.screen-translate.source-langs", st.getSourceLangs());
+        out.put("reaction-bot.screen-translate.target-lang", safe(st.getTargetLang()));
+        out.put("reaction-bot.screen-translate.auto-mode", st.isAutoMode());
+        out.put("reaction-bot.screen-translate.interval-ms", st.getIntervalMs());
+        out.put("reaction-bot.screen-translate.dialogue-only", st.isDialogueOnly());
+        out.put("reaction-bot.screen-translate.tts-enabled", st.isTtsEnabled());
+        out.put("reaction-bot.screen-translate.lines-per-page", st.getLinesPerPage());
+        out.put("reaction-bot.screen-translate.capture-mode", safe(st.getCaptureMode()));
+        out.put("reaction-bot.screen-translate.crop-region", safe(st.getCropRegion()));
+        out.put("reaction-bot.screen-translate.blank-luma-stddev", st.getBlankLumaStddev());
+        out.put("reaction-bot.screen-translate.hash-stability-threshold", st.getHashStabilityThreshold());
+        out.put("reaction-bot.screen-translate.require-frame-stability", st.isRequireFrameStability());
+        out.put("reaction-bot.screen-translate.translation-dedup-similarity", st.getTranslationDedupSimilarity());
+        out.put("reaction-bot.screen-translate.target-width", st.getTargetWidth());
+        out.put("reaction-bot.screen-translate.recent-buffer-size", st.getRecentBufferSize());
+        out.put("reaction-bot.screen-translate.history-dir", safe(st.getHistoryDir()));
         return out;
     }
 

@@ -163,10 +163,17 @@ public class ObsScreenshotClient {
         }
     }
 
+    // Java 의 HttpClient WebSocket 은 동시 sendText 시 "Send pending" 던짐.
+    // 화면 번역 모드(주기 캡처 + 디버그 페이지 폴링) 처럼 멀티 스레드에서 OBS 호출이 겹치면
+    // 매번 터지므로 한 번에 하나만 보내도록 직렬화.
+    private final Object sendLock = new Object();
+
     private void sendText(String text) {
         WebSocket ws = socket.get();
         if (ws == null) throw new IllegalStateException("OBS WebSocket 연결 안 됨");
-        ws.sendText(text, true).join();
+        synchronized (sendLock) {
+            ws.sendText(text, true).join();
+        }
     }
 
     private void handleMessage(String text) {
