@@ -95,4 +95,10 @@ public class PokemonOverlayController {
         return Map.of("status", "started",
                 "message", "백그라운드 재빌드 시작. 수십 초 후 ./data/pokemon-name-index.json 갱신.");
     }
+
+    /** 인덱스 빌드 상태 — UI 가 폴링해서 "재빌드 중…" / "{N}개" 표시. */
+    @GetMapping("/index-status")
+    public PokemonSpeciesService.IndexStatus indexStatus() {
+        return speciesService.indexStatus();
+    }
 }

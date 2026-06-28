@@ -242,35 +242,34 @@
   .manual-bar button:hover { filter: brightness(1.1); }
   .manual-bar .hint { color: #6e7681; font-size: 10px; margin-right: 4px; }
 
-  /* manual-bar 아래 자동완성 칩 패널. 결과 있을 때만 노출. */
+  /* 검색창 자동완성 드롭다운. input 바로 아래에 떠 있는 세로 리스트. */
+  .manual-bar { position: relative; }
   .suggest {
-    background: rgba(8,12,18,0.92);
-    border: 1px solid rgba(255,255,255,0.10);
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    background: rgba(8,12,18,0.96);
+    border: 1px solid rgba(255,255,255,0.12);
     border-radius: 8px;
-    padding: 6px 8px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    margin-top: -2px;
+    padding: 4px 0;
+    z-index: 50;
+    max-height: 260px;
+    overflow-y: auto;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.5);
   }
-  .suggest .empty-hint {
-    color: #6e7681;
-    font-size: 10px;
-    padding: 2px 4px;
-  }
-  .suggest .chip {
-    font-size: 11px;
-    background: #21262d;
-    color: #c9d1d9;
-    border: 1px solid #30363d;
-    border-radius: 6px;
-    padding: 3px 8px;
+  .suggest .row {
+    display: block;
+    padding: 6px 12px;
+    font-size: 13px;
+    color: #e6edf3;
     cursor: pointer;
     text-shadow: none;
     user-select: none;
+    line-height: 1.4;
   }
-  .suggest .chip:hover { background: #30363d; }
-  .suggest .chip.active { background: #1f6feb; border-color: #1f6feb; color: white; }
+  .suggest .row:hover { background: rgba(88,166,255,0.12); }
+  .suggest .row.active { background: #1f6feb; color: white; }
 </style>
 </head>
 <body>
@@ -651,30 +650,36 @@
     suggestActiveIdx = list && list.length > 0 ? 0 : -1;
     panel.innerHTML = '';
     if (!list || list.length === 0) {
-      // 인덱스 미빌드 등 빈 응답 시 hint만 잠깐 보여주려다가 — 사용자에게 거슬릴 수 있어 그냥 숨김.
       panel.classList.add('hidden');
       return;
     }
     panel.classList.remove('hidden');
     list.forEach((name, i) => {
-      const chip = document.createElement('span');
-      chip.className = 'chip' + (i === suggestActiveIdx ? ' active' : '');
-      chip.textContent = name;
-      chip.addEventListener('mousedown', (e) => {
+      const row = document.createElement('div');
+      row.className = 'row' + (i === suggestActiveIdx ? ' active' : '');
+      row.textContent = name;
+      row.addEventListener('mousedown', (e) => {
         // mousedown 으로 처리해야 input의 blur 보다 먼저 발화 (focus 안 잃음)
         e.preventDefault();
         replaceLastToken(name);
       });
-      panel.appendChild(chip);
+      // 마우스 hover 시 active 인덱스도 동기화 (키보드 ↑↓ 와 자연스럽게 합쳐짐)
+      row.addEventListener('mouseenter', () => {
+        suggestActiveIdx = i;
+        updateActiveRow();
+      });
+      panel.appendChild(row);
     });
   }
 
-  function updateActiveChip() {
+  function updateActiveRow() {
     const panel = document.getElementById('suggestPanel');
     Array.from(panel.children).forEach((el, i) => {
       el.classList.toggle('active', i === suggestActiveIdx);
     });
   }
+  // 기존 키보드 핸들러에서 부르던 이름 유지 (호환)
+  function updateActiveChip() { updateActiveRow(); }
 
   let suggestTimer = null;
   async function fetchSuggest() {

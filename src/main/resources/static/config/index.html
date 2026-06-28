@@ -129,6 +129,10 @@
     transition: border-color 0.15s, background 0.15s;
   }
   .mode-toggle label:hover { border-color: #58a6ff; }
+  .mode-toggle label:focus-within {
+    outline: 2px solid #58a6ff;
+    outline-offset: 2px;
+  }
   .mode-toggle label.active {
     border-color: #58a6ff;
     background: #161f2d;
@@ -136,6 +140,61 @@
   .mode-toggle input { position: absolute; opacity: 0; pointer-events: none; }
   .mode-toggle .mode-title { font-size: 14px; font-weight: 600; color: #e6edf3; }
   .mode-toggle .mode-desc { font-size: 12px; color: #8b949e; line-height: 1.4; }
+
+  /* 포켓몬 오버레이 — 관리 섹션 */
+  .manage-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 0;
+  }
+  .manage-row input[type="text"] {
+    flex: 1;
+    min-width: 0;
+  }
+  .manage-btn {
+    background: #21262d;
+    color: #c9d1d9;
+    border: 1px solid #30363d;
+    padding: 8px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .manage-btn:hover { background: #30363d; }
+  .manage-btn.primary { background: #1f6feb; color: white; border-color: #1f6feb; }
+  .manage-btn.primary:hover { background: #388bfd; }
+  .manage-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* 검색창 자동완성 드롭다운 (input 바로 아래) */
+  .manual-bar { position: relative; }
+  .suggest {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 4px 0;
+    z-index: 50;
+    max-height: 260px;
+    overflow-y: auto;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+  }
+  .suggest .row {
+    display: block;
+    padding: 6px 12px;
+    font-size: 13px;
+    color: #e6edf3;
+    cursor: pointer;
+    user-select: none;
+    line-height: 1.4;
+  }
+  .suggest .row:hover { background: rgba(88,166,255,0.12); }
+  .suggest .row.active { background: #1f6feb; color: white; }
 </style>
 </head>
 <body>
@@ -157,7 +216,7 @@
         <label data-mode="screen-translate">
           <input type="radio" name="reaction-bot.mode" value="screen-translate">
           <span class="mode-title">화면 번역 모드</span>
-          <span class="mode-desc">화면을 캡처해 텍스트를 인식·번역하여 표시. (개발 예정)</span>
+          <span class="mode-desc">화면을 캡처해 텍스트를 인식·번역하여 표시 (포켓몬 스타일 대화창, TTS, 히스토리).</span>
         </label>
       </div>
       <div class="restart-note">⚠ 모드 변경은 서버 재기동 후 적용됩니다.</div>
@@ -400,7 +459,7 @@
       </div>
     </div>
 
-    <div class="card" data-mode-scope="reaction-bot">
+    <div class="card">
       <h2>TTS (음성 합성)</h2>
       <div class="hint">Microsoft Edge 무료 TTS만 지원. 키 불필요.</div>
 
@@ -524,6 +583,29 @@
   </form>
 
   <div id="status" class="status"></div>
+
+  <!-- 포켓몬 오버레이 — 즉시 동작하는 관리 액션. form 저장과 무관 (재기동 불필요). -->
+  <div class="card" id="overlay-manage-card" style="margin-top:24px;">
+    <h2>포켓몬 오버레이 — 관리 <span class="badge">즉시 적용</span></h2>
+    <div class="hint">아래 액션은 서버 재기동 없이 즉시 반영됩니다.</div>
+
+    <label>PokéAPI 일어 인덱스</label>
+    <div class="manage-row">
+      <span id="indexStatus" class="hint" style="flex:1;">상태 확인 중…</span>
+      <button type="button" id="rebuildBtn" class="manage-btn">재빌드</button>
+    </div>
+    <div class="hint">자동완성/한글 입력이 안 되면 인덱스가 비어있을 가능성. 재빌드는 ~3~5분 (백그라운드, 봇은 계속 사용 가능).</div>
+
+    <label style="margin-top:14px;">수동 카드 입력</label>
+    <div class="manage-row manual-bar">
+      <input id="cfgManualInput" type="text" placeholder="한카리아스, ガブリアス, garchomp …" autocomplete="off">
+      <button type="button" id="cfgManualApply" class="manage-btn primary">적용</button>
+      <button type="button" id="cfgManualClear" class="manage-btn">초기화</button>
+      <div id="cfgSuggestPanel" class="suggest hidden"></div>
+    </div>
+    <div class="hint">/pokemon-overlay 화면에 즉시 표시. 콤마/<code>、</code>/줄바꿈으로 여러 마리. <code>↑↓</code> 이동 · <code>Tab</code>/<code>Enter</code> 선택 · <code>Esc</code> 닫기.</div>
+    <div id="cfgManualMsg" class="hint" style="margin-top:6px;"></div>
+  </div>
 
   <div class="links">
     <a href="/">← 홈 (전체 메뉴)</a>
@@ -838,6 +920,7 @@ async function pollStatusAndReload() {
   showStatus('재기동 후 60초 안에 응답이 없습니다. 콘솔 창과 로그를 확인하세요.', true);
   restartBtn.disabled = false;
   restartBtn.textContent = '서버 재기동';
+  saveBtn.disabled = false;   // 폴링 타임아웃 시 저장도 다시 풀어줘 페이지 잠금 방지
 }
 
 restartBtn.addEventListener('click', async () => {
@@ -1007,6 +1090,208 @@ restartBtn.addEventListener('click', async () => {
 })();
 
 load();
+
+// =========================================================================
+// 포켓몬 오버레이 관리 (즉시 동작 — 저장/재기동 불필요)
+// =========================================================================
+(function setupOverlayManage() {
+  const statusEl = document.getElementById('indexStatus');
+  const rebuildBtn = document.getElementById('rebuildBtn');
+  const input = document.getElementById('cfgManualInput');
+  const applyBtn = document.getElementById('cfgManualApply');
+  const clearBtn = document.getElementById('cfgManualClear');
+  const msgEl = document.getElementById('cfgManualMsg');
+  const panel = document.getElementById('cfgSuggestPanel');
+
+  if (!statusEl || !rebuildBtn || !input || !applyBtn || !clearBtn || !panel) return;
+
+  // ---------- 인덱스 상태 폴링 ----------
+  async function refreshIndexStatus() {
+    try {
+      const r = await fetch('/api/pokemon-overlay/index-status', { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const s = await r.json();
+      let label;
+      if (s.building) {
+        label = `<span style="color:#d29922;">⏳ 재빌드 중… (${s.size}개 로드됨)</span>`;
+      } else if (s.size > 0) {
+        const when = s.builtAt ? new Date(s.builtAt).toLocaleString() : '-';
+        label = `<span style="color:#56d364;">✓ ${s.size}개</span> · 빌드 시각 ${when}`;
+      } else {
+        label = '<span style="color:#f85149;">✗ 인덱스 비어있음</span> — 재빌드 필요';
+      }
+      statusEl.innerHTML = label;
+      rebuildBtn.disabled = s.building;
+      rebuildBtn.textContent = s.building ? '진행 중…' : '재빌드';
+    } catch (e) {
+      statusEl.innerHTML = '<span style="color:#6e7681;">상태 조회 실패 (서버 미동작?)</span>';
+    }
+  }
+  refreshIndexStatus();
+  setInterval(refreshIndexStatus, 3000);
+
+  rebuildBtn.addEventListener('click', async () => {
+    rebuildBtn.disabled = true;
+    try {
+      const r = await fetch('/api/pokemon-overlay/rebuild-index', { method: 'POST' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      refreshIndexStatus();
+    } catch (e) {
+      alert('재빌드 호출 실패: ' + e.message);
+      rebuildBtn.disabled = false;
+    }
+  });
+
+  // ---------- 수동 입력 ----------
+  function showMsg(text, isError) {
+    msgEl.innerHTML = '<span style="color:' + (isError ? '#f85149' : '#56d364') + ';">' + text + '</span>';
+    setTimeout(() => { msgEl.innerHTML = ''; }, 4000);
+  }
+
+  async function applyManual() {
+    const raw = (input.value || '').trim();
+    if (!raw) return;
+    const names = raw.split(/[,、\n]+/).map(s => s.trim()).filter(Boolean);
+    if (names.length === 0) return;
+    try {
+      const r = await fetch('/api/pokemon-overlay/manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ names })
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const state = await r.json();
+      const cardCount = (state.cards || []).length;
+      if (state.lastError) showMsg('적용됨 (' + cardCount + '종) — ' + state.lastError, true);
+      else                 showMsg('적용 완료 (' + cardCount + '종) — /pokemon-overlay 확인', false);
+    } catch (e) {
+      showMsg('수동 입력 실패: ' + e.message, true);
+    }
+  }
+
+  async function clearCards() {
+    try {
+      const r = await fetch('/api/pokemon-overlay/cards', { method: 'DELETE' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      input.value = '';
+      showMsg('카드 초기화 완료', false);
+    } catch (e) {
+      showMsg('초기화 실패: ' + e.message, true);
+    }
+  }
+
+  applyBtn.addEventListener('click', applyManual);
+  clearBtn.addEventListener('click', clearCards);
+
+  // ---------- 자동완성 드롭다운 ----------
+  function lastToken(s) {
+    if (!s) return '';
+    const parts = s.split(/[,、\n]+/);
+    return (parts[parts.length - 1] || '').trim();
+  }
+
+  function replaceLastToken(name) {
+    const v = input.value;
+    let lastSep = -1;
+    for (let i = v.length - 1; i >= 0; i--) {
+      const c = v[i];
+      if (c === ',' || c === '、' || c === '\n') { lastSep = i; break; }
+    }
+    const head = lastSep >= 0 ? v.slice(0, lastSep + 1) : '';
+    const sep = lastSep >= 0 && !head.endsWith(' ') ? ' ' : '';
+    input.value = head + sep + name + ', ';
+    input.focus();
+    renderSuggest([]);
+  }
+
+  let suggestSeq = 0;
+  let suggestActiveIdx = -1;
+  let suggestCache = [];
+
+  function renderSuggest(list) {
+    suggestCache = list || [];
+    suggestActiveIdx = list && list.length > 0 ? 0 : -1;
+    panel.innerHTML = '';
+    if (!list || list.length === 0) { panel.classList.add('hidden'); return; }
+    panel.classList.remove('hidden');
+    list.forEach((name, i) => {
+      const row = document.createElement('div');
+      row.className = 'row' + (i === suggestActiveIdx ? ' active' : '');
+      row.textContent = name;
+      row.addEventListener('mousedown', (e) => { e.preventDefault(); replaceLastToken(name); });
+      row.addEventListener('mouseenter', () => { suggestActiveIdx = i; updateActive(); });
+      panel.appendChild(row);
+    });
+  }
+
+  function updateActive() {
+    Array.from(panel.children).forEach((el, i) => {
+      el.classList.toggle('active', i === suggestActiveIdx);
+    });
+  }
+
+  let suggestTimer = null;
+  async function fetchSuggest() {
+    const q = lastToken(input.value);
+    if (q.length < 1) { renderSuggest([]); return; }
+    const mySeq = ++suggestSeq;
+    try {
+      const r = await fetch('/api/pokemon-overlay/suggest?q=' + encodeURIComponent(q) + '&limit=10', { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      if (mySeq !== suggestSeq) return;
+      renderSuggest(await r.json());
+    } catch (e) {
+      if (mySeq === suggestSeq) renderSuggest([]);
+    }
+  }
+
+  input.addEventListener('input', () => {
+    clearTimeout(suggestTimer);
+    suggestTimer = setTimeout(fetchSuggest, 180);
+  });
+  input.addEventListener('blur', () => {
+    setTimeout(() => panel.classList.add('hidden'), 150);
+  });
+  input.addEventListener('focus', () => {
+    if (suggestCache.length > 0) panel.classList.remove('hidden');
+  });
+
+  // 키보드 네비게이션 (input 포커스 한정)
+  input.addEventListener('keydown', (e) => {
+    if (suggestCache.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        suggestActiveIdx = (suggestActiveIdx + 1) % suggestCache.length;
+        updateActive();
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        suggestActiveIdx = (suggestActiveIdx - 1 + suggestCache.length) % suggestCache.length;
+        updateActive();
+        return;
+      }
+      if (e.key === 'Tab' && suggestActiveIdx >= 0) {
+        e.preventDefault();
+        replaceLastToken(suggestCache[suggestActiveIdx]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        renderSuggest([]);
+        return;
+      }
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (suggestCache.length > 0 && suggestActiveIdx >= 0) {
+        replaceLastToken(suggestCache[suggestActiveIdx]);
+      } else {
+        applyManual();
+      }
+    }
+  });
+})();
 </script>
 </body>
 </html>
