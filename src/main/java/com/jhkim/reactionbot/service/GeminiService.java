@@ -289,20 +289,25 @@ public class GeminiService implements LlmProvider {
         return callRaw(pickModel(useTriageModel), systemPrompt, userPrompt, null, useTriageModel);
     }
 
+    // raw 분석(analyzeImage/analyzeText) 전용 모델 선택. 리액션 코멘트 경로(generateComment 등)는
+    // 이 메서드를 거치지 않고 model/triage-model 을 직접 사용 → analyze-model 설정과 무관.
     private String pickModel(boolean useTriageModel) {
         String triage = properties.getGemini().getTriageModel();
         String main = properties.getGemini().getModel();
         if (useTriageModel) return (triage == null || triage.isBlank()) ? main : triage;
-        return main;
+        String analyze = properties.getGemini().getAnalyzeModel();
+        return (analyze == null || analyze.isBlank()) ? main : analyze;
     }
 
     /** 페르소나/히스토리/nudge 미적용. systemPrompt+userPrompt(+image) 만으로 단발 호출. */
     private String callRaw(String model, String systemPrompt, String userPrompt,
                            String base64JpegImage, boolean useTriageModel) {
         List<Content> contents = List.of(buildUserContent(userPrompt, base64JpegImage));
+        // 리액션 코멘트용 max-tokens(짧음)와 분리된 상한 사용.
+        // 화면 번역에서 긴 대사 추출/번역이 max-tokens=200 에 잘려 "부분 번역"이 되던 문제 방지.
         GenerateContentConfig config = GenerateContentConfig.builder()
                 .systemInstruction(Content.fromParts(Part.fromText(systemPrompt)))
-                .maxOutputTokens(properties.getGemini().getMaxTokens())
+                .maxOutputTokens(properties.getGemini().getAnalyzeMaxTokens())
                 .thinkingConfig(ThinkingConfig.builder().thinkingBudget(0).build())
                 .build();
         log.debug("Gemini raw 호출 (model={}, image={}, triage={})", model, base64JpegImage != null, useTriageModel);

@@ -29,8 +29,9 @@ public class PokemonOverlayScheduler {
     @Scheduled(fixedDelay = 1000)
     public void tick() {
         if (properties.isScreenTranslateMode()) return;
-        BotProperties.Overlay cfg = properties.getPokemon().getOverlay();
-        if (!properties.getPokemon().isEnabled() || !cfg.isEnabled()) return;
+        BotProperties.Overlay cfg = properties.getPokemonOverlay();
+        // 오버레이는 pokemon.enabled(발화 컨텍스트 주입)와 독립 — 자체 enabled 만 확인.
+        if (!cfg.isEnabled()) return;
         if (!"auto".equalsIgnoreCase(cfg.getMode())) return;
 
         long intervalMs = Math.max(1000L, cfg.getRefreshIntervalMs());

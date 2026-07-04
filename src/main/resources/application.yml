@@ -185,6 +185,9 @@ reaction-bot:
     blank-luma-stddev: 8.0          # 단색 판정 임계. /translate/debug 에서 luma 확인 후 조정. 0=비활성
     hash-stability-threshold: 10    # dHash hamming 임계. 이 이하면 같은 화면. 미세 노이즈 흡수
     require-frame-stability: true   # true=프레임이 안정(직전과 유사)할 때만 LLM 호출. 이동/카메라워크 비용 절감
+    min-stable-ticks: 2             # 연속 N tick 안정 시에만 추출 호출. 대화창 타자기 연출 중간 캡처(부분 번역) 방지
+    hash-dedup-threshold: 4         # "이미 처리한 화면" 재번역 판정 임계. stability 임계보다 작게 — 텍스트 증가 감지용
+    stage1-use-main-model: true     # stage1(화면 텍스트 추출)에 메인 모델 사용. false=triage 모델(저렴하지만 OCR 약함)
     translation-dedup-similarity: 0.85  # 직전 번역과 유사도 ≥ 이 값이면 중복으로 보고 TTS/state/history 스킵
     recent-buffer-size: 10          # /translate UI 최근 번역 재생 버튼 개수 (메모리 only)
     target-width: 1280              # LLM 전달 이미지 가로폭. 672=reaction-bot 기본(자막엔 작음), 1280=권장, 1568=최대정확
@@ -195,21 +198,21 @@ reaction-bot:
     pokeapi-base: "https://pokeapi.co/api/v2"
     cache-ttl-sec: 86400
 
-    # 포켓몬 오버레이 (발화와 별개) - 스크린샷에서 포켓몬을 인식해 /pokemon-overlay HTML에 카드로 표시.
-    # 켜두면 화면 안의 포켓몬(싱글 2, 더블 4)을 도트/한글명/세대 기준 종족값과 함께 보여줌.
-    # OBS 브라우저 소스에 띄워두는 용도. provider는 reaction-bot.llm.provider 그대로 재사용.
-    overlay:
-      enabled: true
-      generation: 9                # 1~9. 해당 세대 시점 종족값/타입 데이터 기준 (BotProperties.Overlay 디폴트와 일치)
-      mode: "manual"               # "auto" | "manual" | "speech-precapture"
-      refresh-interval-ms: 10000   # auto 모드 폴링 주기. 너무 짧으면 LLM 호출 폭증
-      max-pokemon: 2               # 카드 최대 개수. 2=싱글배틀, 4=더블배틀
-      infer-moves: false           # true면 LLM에게 기술 4개 추측까지 요청. 응답 더 느려짐
-      crop-region: ""              # "x,y,w,h" 0~1 정규화 좌표. 빈 값=전체. 예: "0,0.6,1,0.4"
-      # 봇 자체 오버레이를 화면에 함께 띄울 때, 그 영역을 검정 박스로 마스킹해
-      # LLM이 자기 카드를 분석 대상으로 잡지 않게 함. ";"로 여러 영역 지정 가능.
-      # 예: "0,0,0.25,0.5" (좌측 25% 가로, 위 50% 세로 마스킹)
-      ignore-region: ""
+  # 포켓몬 오버레이 — 스크린샷에서 포켓몬을 인식해 /pokemon-overlay HTML에 카드로 표시.
+  # 리액션 모드·번역 모드 모두에서 사용하는 공통 설정.
+  # OBS 브라우저 소스에 띄워두는 용도. provider는 reaction-bot.llm.provider 그대로 재사용.
+  pokemon-overlay:
+    enabled: true
+    generation: 9                # 1~9. 해당 세대 시점 종족값/타입 데이터 기준
+    mode: "manual"               # "auto" | "manual" | "speech-precapture"
+    refresh-interval-ms: 10000   # auto 모드 폴링 주기. 너무 짧으면 LLM 호출 폭증
+    max-pokemon: 2               # 카드 최대 개수. 2=싱글배틀, 4=더블배틀
+    infer-moves: false           # true면 LLM에게 기술 4개 추측까지 요청. 응답 더 느려짐
+    crop-region: ""              # "x,y,w,h" 0~1 정규화 좌표. 빈 값=전체. 예: "0,0.6,1,0.4"
+    # 봇 자체 오버레이를 화면에 함께 띄울 때, 그 영역을 검정 박스로 마스킹해
+    # LLM이 자기 카드를 분석 대상으로 잡지 않게 함. ";"로 여러 영역 지정 가능.
+    # 예: "0,0,0.25,0.5" (좌측 25% 가로, 위 50% 세로 마스킹)
+    ignore-region: ""
 
 logging:
   file:

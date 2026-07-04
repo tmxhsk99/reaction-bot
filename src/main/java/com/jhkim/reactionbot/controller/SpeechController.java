@@ -49,9 +49,9 @@ public class SpeechController {
     public ResponseEntity<Void> preCapture() {
         screenCaptureService.preCaptureForSpeech();
         // overlay.mode=speech-precapture 면 발화 시점에 함께 분석. 응답 지연 안 주려고 비동기.
-        BotProperties.Overlay ov = properties.getPokemon().getOverlay();
-        if (properties.getPokemon().isEnabled()
-                && ov.isEnabled()
+        // 오버레이는 pokemon.enabled(발화 컨텍스트 주입)와 독립 — 자체 enabled/mode 만 확인.
+        BotProperties.Overlay ov = properties.getPokemonOverlay();
+        if (ov.isEnabled()
                 && "speech-precapture".equalsIgnoreCase(ov.getMode())) {
             CompletableFuture.runAsync(() -> {
                 try { pokemonOverlayService.analyze(false); }

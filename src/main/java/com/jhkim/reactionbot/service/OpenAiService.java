@@ -287,7 +287,9 @@ public class OpenAiService implements LlmProvider {
                            String base64JpegImage, boolean useTriageModel) {
         ChatCompletionCreateParams.Builder builder = ChatCompletionCreateParams.builder()
                 .model(model)
-                .maxCompletionTokens((long) properties.getOpenai().getMaxTokens())
+                // 화면 번역 등 긴 출력이 필요한 raw 호출 — 코멘트용 max-tokens 가 작아도
+                // 최소 1024 는 보장해 번역이 중간에 잘리지 않게 함.
+                .maxCompletionTokens(Math.max(1024L, properties.getOpenai().getMaxTokens()))
                 .addSystemMessage(systemPrompt);
         addLastUserMessage(builder, userPrompt, base64JpegImage);
         log.debug("OpenAI raw 호출 (model={}, image={}, triage={})", model, base64JpegImage != null, useTriageModel);
