@@ -34,6 +34,7 @@ public class BotProperties {
     private Speech speech = new Speech();
     private IdleTrigger idleTrigger = new IdleTrigger();
     private Pokemon pokemon = new Pokemon();
+    private Overlay pokemonOverlay = new Overlay();
     private ScreenTranslate screenTranslate = new ScreenTranslate();
 
     @Getter @Setter
@@ -80,6 +81,13 @@ public class BotProperties {
         private String model;            // 코멘트 생성용 (Flash)
         private String triageModel;      // PASS/SPEAK 1차 판단용 (Flash-Lite)
         private int maxTokens;
+        // 화면 번역 등 raw 분석 호출(analyzeImage/analyzeText, useTriageModel=false)용 모델.
+        // 빈 값이면 model 재사용. 리액션 코멘트 모델과 분리해서 번역 품질만 올리고 싶을 때 지정.
+        // (화면 번역 OCR 은 flash-lite 로는 SKIP 오판이 잦음 → gemini-2.5-flash 권장)
+        private String analyzeModel = "";
+        // 화면 번역/포켓몬 오버레이 등 raw 분석 호출(analyzeImage/analyzeText) 전용 출력 토큰 상한.
+        // max-tokens(리액션 코멘트용, 짧음)와 분리 — 200 같은 값이면 긴 대사 번역이 중간에 잘림.
+        private int analyzeMaxTokens = 1024;
     }
 
     /**
@@ -328,7 +336,6 @@ public class BotProperties {
         private boolean enabled;
         private String pokeapiBase;         // PokeAPI 베이스 URL
         private int cacheTtlSec;
-        private Overlay overlay = new Overlay();
     }
 
     /**
@@ -382,6 +389,18 @@ public class BotProperties {
         // 캐릭터 이동/카메라 워크처럼 매 프레임이 다른 상태에선 LLM 호출 자체 스킵 → 비용 절감.
         // false 면 hash 변화 즉시 호출 (구버전 동작).
         private boolean requireFrameStability = true;
+        // 자동 모드에서 stage 1 호출 전 요구하는 연속 안정 tick 수 (require-frame-stability=true 일 때만).
+        // 게임 대화창의 타자기 연출(한 글자씩 출력) 중간에 캡처해 대사 앞부분만 번역되는 것 방지.
+        // 1 = 기존 동작(직전 프레임과 비슷하면 즉시 호출). 2 권장 — 텍스트가 완전히 출력된 뒤 호출.
+        private int minStableTicks = 2;
+        // "이미 처리한 안정 화면" 재번역 판정용 hamming 임계. hash-stability-threshold(움직임 감지)보다
+        // 작게 둬야 타자기 연출로 텍스트가 조금씩 늘어난 화면을 "같은 화면"으로 오판하지 않고 재추출한다.
+        // 재추출해도 source 유사도 dedup 이 2차 방어라 중복 번역/TTS 폭증은 없음.
+        private int hashDedupThreshold = 4;
+        // stage 1(화면 텍스트 추출)에 메인 모델 사용 여부. 화면 OCR 이 파이프라인에서 가장 어려운
+        // 작업이라 true 권장 (triage 모델이 약하면 SKIP 오판/부분 추출이 잦음).
+        // false = 기존 동작(triage 모델로 추출) — 비용 우선일 때.
+        private boolean stage1UseMainModel = true;
         // 번역 결과 유사도 dedup 임계 (0~1). 직전 source/translated 와 ratio > 이 값이면 중복 처리.
         // 1.0 = 완전 일치만 dedup, 0.85 = 약간 다르면(부호/공백 차이) 같이 dedup.
         // 0 으로 두면 사실상 dedup 비활성.
@@ -398,15 +417,8 @@ public class BotProperties {
 
     /**
      * 스크린샷에서 포켓몬을 인식해 /pokemon-overlay HTML 화면에 띄우는 add-on.
-     * 발화 흐름과 분리된 별개 기능. enabled=false 면 비활성(스케줄러/엔드포인트도 no-op).
-     *
-     * 트리거 모드:
-     *   - auto              : refresh-interval-ms 주기로 자동 분석 (방송 중 켜놓기)
-     *   - manual            : /pokemon-overlay 우측 분석 버튼으로만 트리거
-     *   - speech-precapture : 발화 프리캡처 시점에 함께 분석 (발화 있을 때만 갱신)
-     *
-     * 세대(generation): 1~9. PokéAPI past_values를 활용해 해당 세대 시점의 종족값/타입을 표시.
-     * max-pokemon: 한 화면에 보여줄 카드 수 상한 (2=싱글배틀, 4=더블배틀).
+     * 리액션 모드·번역 모드 모두에서 사용하는 공통 설정 (reaction-bot.pokemon-overlay.*).
+     * enabled=false 면 비활성(스케줄러/엔드포인트도 no-op).
      */
     @Getter @Setter
     public static class Overlay {

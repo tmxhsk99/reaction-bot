@@ -7,6 +7,14 @@
 reaction-bot:
   gemini:
     api-key: ${GEMINI_API_KEY:}
-    model: gemini-2.5-flash-lite          # 코멘트 생성용
+    model: gemini-2.5-flash-lite          # 리액션 코멘트 생성용
     triage-model: gemini-2.5-flash-lite   # PASS 판단용 (cheapest)
-    max-tokens: 200
+    max-tokens: 200                       # 리액션 코멘트용 출력 상한 (짧은 응답 전용)
+    # ----- 화면 번역/캡처 분석 전용 (리액션 봇 경로에는 영향 없음) -----
+    # 화면 번역(텍스트 추출/번역) 등 raw 분석 호출용 모델. 빈 값이면 model 재사용.
+    # 스크린샷 OCR(일본어 등)은 flash-lite 로는 SKIP 오판/부분 추출이 잦음 →
+    # gemini-2.5-flash 권장 (OCR/번역 품질 큰 폭 ↑, 여전히 저렴).
+    analyze-model: gemini-2.5-flash
+    # raw 분석 호출 전용 출력 상한. max-tokens(200)를 그대로 쓰면
+    # 긴 대사 추출 JSON/번역문이 중간에 잘려 "부분 번역"이 됨.
+    analyze-max-tokens: 1024

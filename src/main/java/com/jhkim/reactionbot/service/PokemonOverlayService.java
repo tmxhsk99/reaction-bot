@@ -95,7 +95,7 @@ public class PokemonOverlayService {
      */
     public OverlayState currentState() {
         OverlayState cur = state.get();
-        BotProperties.Overlay cfg = properties.getPokemon().getOverlay();
+        BotProperties.Overlay cfg = properties.getPokemonOverlay();
         return new OverlayState(
                 cfg.isEnabled(),
                 cfg.getGeneration(),
@@ -117,16 +117,13 @@ public class PokemonOverlayService {
      * @param force true면 직전 결과와 같아도 PokéAPI 재조회 (수동 새로고침)
      */
     public OverlayState analyze(boolean force) {
-        BotProperties.Overlay cfg = properties.getPokemon().getOverlay();
+        BotProperties.Overlay cfg = properties.getPokemonOverlay();
         // 비활성 케이스를 사일런트로 두면 사용자가 "버튼 눌렀는데 아무 일도 안 일어남"으로 인지.
         // 분명한 INFO 로그 + lastError 셋업으로 UI에 안내.
-        if (!properties.getPokemon().isEnabled()) {
-            log.info("오버레이 analyze 호출됨 — pokemon.enabled=false 라 비활성. no-op.");
-            setError("pokemon.enabled=false (reaction-bot.pokemon.enabled=true 로 켜고 서버 재기동 필요)");
-            return currentState();
-        }
+        // (pokemon.enabled 는 리액션 봇의 발화 컨텍스트 주입 토글 — 오버레이와 무관. 오버레이는
+        //  번역 모드에서도 쓰는 독립 기능이라 pokemon-overlay.enabled 만 따른다.)
         if (!cfg.isEnabled()) {
-            log.info("오버레이 analyze 호출됨 — pokemon.overlay.enabled=false 라 비활성. no-op.");
+            log.info("오버레이 analyze 호출됨 — pokemon-overlay.enabled=false 라 비활성. no-op.");
             setError("오버레이가 꺼져 있음 (/config 에서 '포켓몬 오버레이' 체크 후 저장 + 서버 재기동)");
             return currentState();
         }
@@ -217,7 +214,7 @@ public class PokemonOverlayService {
     public OverlayState applyManual(List<String> names) {
         // 진행 중 analyze 가 결과를 덮어쓰지 못하도록 epoch 증가.
         stateEpoch.incrementAndGet();
-        BotProperties.Overlay cfg = properties.getPokemon().getOverlay();
+        BotProperties.Overlay cfg = properties.getPokemonOverlay();
         if (names == null || names.isEmpty()) {
             log.info("수동 입력: 빈 목록 — 카드 비움");
             updateCards(List.of(), false, null);
@@ -530,7 +527,7 @@ public class PokemonOverlayService {
     }
 
     private void updateCards(List<Card> cards, boolean mirror, String error) {
-        BotProperties.Overlay cfg = properties.getPokemon().getOverlay();
+        BotProperties.Overlay cfg = properties.getPokemonOverlay();
         state.set(new OverlayState(
                 cfg.isEnabled(),
                 cfg.getGeneration(),
@@ -545,7 +542,7 @@ public class PokemonOverlayService {
 
     private void setError(String msg) {
         OverlayState cur = state.get();
-        BotProperties.Overlay cfg = properties.getPokemon().getOverlay();
+        BotProperties.Overlay cfg = properties.getPokemonOverlay();
         state.set(new OverlayState(
                 cfg.isEnabled(),
                 cfg.getGeneration(),

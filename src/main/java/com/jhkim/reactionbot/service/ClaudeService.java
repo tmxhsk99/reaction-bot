@@ -272,7 +272,9 @@ public class ClaudeService implements LlmProvider {
                 MessageParam.builder().role(MessageParam.Role.USER).content(userPrompt).build());
         MessageCreateParams params = MessageCreateParams.builder()
                 .model(model)
-                .maxTokens((long) properties.getAnthropic().getMaxTokens())
+                // 화면 번역(stage 2) 등 긴 출력이 필요한 raw 호출 — 코멘트용 max-tokens 가 작아도
+                // 최소 1024 는 보장해 번역이 중간에 잘리지 않게 함.
+                .maxTokens(Math.max(1024L, properties.getAnthropic().getMaxTokens()))
                 .system(systemPrompt)
                 .messages(messages)
                 .build();

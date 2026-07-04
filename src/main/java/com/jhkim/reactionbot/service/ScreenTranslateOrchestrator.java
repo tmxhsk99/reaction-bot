@@ -32,15 +32,16 @@ import java.util.regex.Pattern;
  * 화면 번역 모드 핵심 파이프라인.
  *
  * 흐름 (auto mode, 토글 ON):
- *   tick → capture → 2-프레임 안정성 체크 (직전 프레임과 비슷할 때만 통과)
- *        → lastStable 과 다를 때만 stage 1 호출
- *        → stage 1 (triage 모델, vision) → SKIP 또는 {speaker, source, lang}
- *        → source/translated 유사도 dedup
+ *   tick → capture → 프레임 안정성 체크 (min-stable-ticks 연속 안정일 때만 통과 — 타자기 연출 대기)
+ *        → lastStable 과 hash-dedup-threshold 이상 다를 때만 stage 1 호출
+ *        → stage 1 (기본 메인 모델, vision) → SKIP 또는 {speaker, source, lang}
+ *        → source/translated 유사도 dedup (직전 source 의 "이어쓰기"면 dedup 우회하고 재번역)
  *        → stage 2 (메인 모델, text) → translated
  *        → 상태/SSE/히스토리/TTS 큐 (latest-wins)
  *
  * 흐름 (manual / 토글 OFF):
- *   manual=true 면 force → 안정성/dedup 우회. 토글 OFF 면 tick 자체 no-op.
+ *   manual=true 면 force → blank/안정성/dedup/SKIP 전부 우회, 무조건 추출·번역.
+ *   토글 OFF 면 tick 자체 no-op.
  *
  * 최근 번역 버퍼:
  *   메모리 ring buffer (히스토리 파일과 별개) — UI 재생 버튼이 ID로 참조.
@@ -73,6 +74,8 @@ public class ScreenTranslateOrchestrator {
     private final AtomicBoolean hasLastFrameHash = new AtomicBoolean(false);
     private final AtomicLong lastStableHash = new AtomicLong(0);
     private final AtomicBoolean hasLastStableHash = new AtomicBoolean(false);
+    // 연속 안정 tick 카운터 — 타자기 연출 중간 캡처 방지 (cfg.minStableTicks 참조)
+    private final AtomicInteger stableTicks = new AtomicInteger(0);
 
     // ----- 자동 토글 (런타임) -----
     // cfg.autoMode=false 면 그 자체로 비활성. cfg.autoMode=true 일 때 사용자가 일시 토글.
@@ -334,10 +337,12 @@ public class ScreenTranslateOrchestrator {
             BotProperties.ScreenTranslate cfg = properties.getScreenTranslate();
 
             // ----- 캡처 -----
+            // 수동(force)이면 blank(단색 화면) 판정도 우회 — 사용자가 직접 요청했으니 무조건 시도.
             ScreenCaptureService.TranslateCapture cap;
             try {
                 String crop = "region".equalsIgnoreCase(cfg.getCaptureMode()) ? cfg.getCropRegion() : "";
-                cap = screenCapture.captureForTranslate(crop, cfg.getBlankLumaStddev(), cfg.getTargetWidth());
+                double blankThreshold = force ? 0 : cfg.getBlankLumaStddev();
+                cap = screenCapture.captureForTranslate(crop, blankThreshold, cfg.getTargetWidth());
             } catch (Exception e) {
                 lastError.set("화면 캡처 실패: " + e.getMessage());
                 log.warn("화면 번역: 캡처 실패", e);
@@ -373,6 +378,7 @@ public class ScreenTranslateOrchestrator {
 
                 // (1) 화면 이동/변화 중 — 직전 프레임과 너무 다르면 stable 아님 → 호출 X
                 if (cfg.isRequireFrameStability() && distFromPrev > thresh) {
+                    stableTicks.set(0);
                     recordDiag("movement-skip",
                             "프레임 변화 중 — hamming(prev)=" + distFromPrev + " > 임계 " + thresh
                                     + ". 화면이 안정되길 기다림. (이동·전투·애니메이션 중일 가능성)",
@@ -380,13 +386,28 @@ public class ScreenTranslateOrchestrator {
                     return;
                 }
 
+                // (1.5) 연속 안정 tick 부족 — 타자기 연출로 텍스트가 아직 출력 중일 수 있음 → 대기.
+                // (대사 앞부분만 추출/번역되고 완성본은 same-stable 로 스킵되는 버그 방지)
+                int stableCount = stableTicks.incrementAndGet();
+                int needStable = Math.max(1, cfg.getMinStableTicks());
+                if (cfg.isRequireFrameStability() && stableCount < needStable) {
+                    recordDiag("stabilizing",
+                            "연속 안정 " + stableCount + "/" + needStable
+                                    + " — 텍스트 출력(타자기 연출) 완료 대기 중",
+                            hashHex, distFromPrev, null, null, null, null);
+                    return;
+                }
+
                 // (2) 이미 처리한 안정 상태와 동일 — 중복 → 호출 X
+                // 움직임 감지(thresh)보다 엄격한 임계 사용: 타자기 연출로 텍스트가 조금 늘어난
+                // 화면(hamming 5~10)을 "이미 처리함"으로 오판하지 않고 재추출하기 위함.
                 if (hasLastStableHash.get()) {
+                    int dedupThresh = Math.max(0, Math.min(thresh, cfg.getHashDedupThreshold()));
                     int distFromStable = frameHash.hamming(currentHash, lastStableHash.get());
                     dStable = distFromStable;
-                    if (distFromStable <= thresh) {
+                    if (distFromStable <= dedupThresh) {
                         recordDiag("same-stable",
-                                "이미 처리한 안정 상태와 동일 — hamming(stable)=" + distFromStable + " ≤ " + thresh,
+                                "이미 처리한 안정 상태와 동일 — hamming(stable)=" + distFromStable + " ≤ " + dedupThresh,
                                 hashHex, distFromPrev, distFromStable, null, null, null);
                         return;
                     }
@@ -401,16 +422,17 @@ public class ScreenTranslateOrchestrator {
                 hasLastStableHash.set(true);
             }
 
-            // ----- Stage 1: triage (vision) -----
+            // ----- Stage 1: 텍스트 추출 (vision) -----
+            // OCR 이 파이프라인에서 가장 어려운 작업 → 기본은 메인 모델 사용 (stage1-use-main-model).
             ParsedTriage triage;
             String stage1Raw = null;
             try {
                 stage1Calls.incrementAndGet();
                 stage1Raw = llmProvider.analyzeImage(
                         buildStage1SystemPrompt(cfg, force),
-                        buildStage1UserPrompt(),
+                        buildStage1UserPrompt(force),
                         cap.base64Jpeg(),
-                        true);
+                        !cfg.isStage1UseMainModel());
                 triage = parseStage1(stage1Raw);
             } catch (UnsupportedOperationException uoe) {
                 lastError.set("현재 LLM provider(" + properties.getLlm().getProvider()
@@ -430,6 +452,12 @@ public class ScreenTranslateOrchestrator {
             if (triage == null) {
                 // 이 프레임은 LLM 이 SKIP 으로 확정 — 같은 프레임 재시도 무의미. stable commit.
                 commitStableHash(currentHash, force);
+                if (force) {
+                    // 수동 트리거는 SKIP 없이 무조건 추출하도록 지시하지만, 응답 파싱 실패/빈 추출이면
+                    // 사용자에게 피드백 (조용히 사라지면 "버튼이 안 먹는다"로 보임).
+                    lastError.set("화면에서 번역할 텍스트를 찾지 못했습니다. (캡처 영역/화면 상태 확인)");
+                    broadcast();
+                }
                 recordDiag("stage1-skip",
                         "Stage 1 응답이 SKIP — 대상 언어가 아니거나 (현재 source-langs=" + cfg.getSourceLangs()
                                 + ") 대화창 텍스트가 아니라고 LLM이 판단. dialogue-only=" + cfg.isDialogueOnly()
@@ -439,9 +467,14 @@ public class ScreenTranslateOrchestrator {
             }
 
             // ----- source 유사도 dedup (수동이면 우회) -----
-            if (!force) {
-                String normSrc = normalizeForDedup(triage.source);
-                String normLastSrc = normalizeForDedup(lastSource.get());
+            // 직전 source 의 "이어쓰기"(타자기 연출로 텍스트가 늘어난 경우)는 유사도가 높아도
+            // 새 내용이므로 dedup 하지 않고 전체를 다시 번역한다.
+            String normSrc = normalizeForDedup(triage.source);
+            String normLastSrc = normalizeForDedup(lastSource.get());
+            boolean sourceGrew = !normLastSrc.isEmpty()
+                    && normSrc.length() > normLastSrc.length()
+                    && normSrc.startsWith(normLastSrc);
+            if (!force && !sourceGrew) {
                 double srcSim = similarityRatio(normSrc, normLastSrc);
                 if (srcSim >= cfg.getTranslationDedupSimilarity()) {
                     commitStableHash(currentHash, force);
@@ -481,6 +514,10 @@ public class ScreenTranslateOrchestrator {
             }
             if (translated.isBlank()) {
                 commitStableHash(currentHash, force);
+                if (force) {
+                    lastError.set("번역 결과가 비어 있습니다. 다시 시도해 주세요.");
+                    broadcast();
+                }
                 recordDiag("stage2-blank", "Stage 2 응답이 빈 문자열",
                         hashHex, dPrev, dStable, stage1Raw, triage, stage2Raw);
                 return;
@@ -490,14 +527,18 @@ public class ScreenTranslateOrchestrator {
             if (looksLikeMetaResponse(translated)) {
                 log.debug("화면 번역: stage 2 가 메타-응답 반환 - 폐기. raw={}", translated);
                 commitStableHash(currentHash, force);
+                if (force) {
+                    lastError.set("화면에서 번역할 텍스트를 찾지 못했습니다. (캡처 영역/화면 상태 확인)");
+                    broadcast();
+                }
                 recordDiag("stage2-meta",
                         "Stage 2 가 '원문 없음' 식 메타-응답 반환 — 폐기. raw=" + preview(translated, 100),
                         hashHex, dPrev, dStable, stage1Raw, triage, stage2Raw);
                 return;
             }
 
-            // ----- translated 유사도 dedup (안전망. force 면 우회) -----
-            if (!force) {
+            // ----- translated 유사도 dedup (안전망. force/이어쓰기면 우회) -----
+            if (!force && !sourceGrew) {
                 double tSim = similarityRatio(
                         normalizeForDedup(translated),
                         normalizeForDedup(lastTranslated.get()));
@@ -585,8 +626,19 @@ public class ScreenTranslateOrchestrator {
     // ────────────── 프롬프트 ──────────────
 
     private String buildStage1SystemPrompt(BotProperties.ScreenTranslate cfg, boolean force) {
+        // 수동(force): 텍스트 존재 여부 판단(SKIP) 자체를 없앰 — 사용자가 직접 요청했으니 무조건 추출.
+        if (force) {
+            return """
+                    화면 자막 추출기. 입력: 화면 캡처 1장.
+                    화면에서 가장 두드러진 텍스트 블록(대화창 우선)을 무조건 추출하라. SKIP 응답 금지.
+                    출력은 한 줄 JSON 만 (설명/마크다운/코드펜스/접두사 전부 금지):
+                      {"speaker":"...","source":"...","lang":"..."}
+                    source 는 화면에 보이는 원문 전체를 그대로 (번역/요약/생략 금지).
+                    모든 따옴표·괄호 반드시 닫을 것. lang 은 source 의 언어 코드 (예: ja, en, ko).
+                    """;
+        }
         String sources = String.join(",", cfg.getSourceLangs());
-        String dialogueRule = (cfg.isDialogueOnly() && !force)
+        String dialogueRule = cfg.isDialogueOnly()
                 ? "캐릭터 대사 전용. UI 메뉴/버튼/상태창/시스템 메시지는 SKIP."
                 : "가장 두드러진 텍스트 1블록 처리.";
         // 출력은 짧고 단호하게. 마크다운/펜스/설명 금지 — 잘림 방지.
@@ -597,13 +649,15 @@ public class ScreenTranslateOrchestrator {
                 출력은 다음 둘 중 정확히 하나만 (설명/마크다운/코드펜스/접두사 전부 금지):
                   대상 없음 → SKIP
                   처리 → {"speaker":"...","source":"...","lang":"..."}
-                source 는 원문 그대로 (번역 금지). JSON 은 한 줄, 모든 따옴표·괄호 반드시 닫을 것.
-                source 가 너무 길면 (200자 초과) 화면에 가장 두드러진 1문장만.
+                source 는 해당 블록에 보이는 원문 전체를 그대로 (번역/요약/생략 금지).
+                JSON 은 한 줄, 모든 따옴표·괄호 반드시 닫을 것.
                 """.formatted(sources, cfg.getTargetLang(), dialogueRule);
     }
 
-    private String buildStage1UserPrompt() {
-        return "이 화면에서 위 규칙대로 응답하라. SKIP 또는 한 줄 JSON 만.";
+    private String buildStage1UserPrompt(boolean force) {
+        return force
+                ? "이 화면에서 위 규칙대로 응답하라. 한 줄 JSON 만."
+                : "이 화면에서 위 규칙대로 응답하라. SKIP 또는 한 줄 JSON 만.";
     }
 
     private String buildStage2SystemPrompt(BotProperties.ScreenTranslate cfg, ParsedTriage triage) {

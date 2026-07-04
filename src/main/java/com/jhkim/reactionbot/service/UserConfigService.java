@@ -60,12 +60,12 @@ public class UserConfigService {
             "reaction-bot.stt.auto-start",
             "reaction-bot.stt.device-index",
             "reaction-bot.pokemon.enabled",
-            "reaction-bot.pokemon.overlay.enabled",
-            "reaction-bot.pokemon.overlay.generation",
-            "reaction-bot.pokemon.overlay.mode",
-            "reaction-bot.pokemon.overlay.refresh-interval-ms",
-            "reaction-bot.pokemon.overlay.max-pokemon",
-            "reaction-bot.pokemon.overlay.infer-moves",
+            "reaction-bot.pokemon-overlay.enabled",
+            "reaction-bot.pokemon-overlay.generation",
+            "reaction-bot.pokemon-overlay.mode",
+            "reaction-bot.pokemon-overlay.refresh-interval-ms",
+            "reaction-bot.pokemon-overlay.max-pokemon",
+            "reaction-bot.pokemon-overlay.infer-moves",
             "reaction-bot.screen-translate.source-langs",
             "reaction-bot.screen-translate.target-lang",
             "reaction-bot.screen-translate.auto-mode",
@@ -147,12 +147,12 @@ public class UserConfigService {
         out.put("reaction-bot.stt.device-index",
                 properties.getStt().getDeviceIndex() == null ? "" : String.valueOf(properties.getStt().getDeviceIndex()));
         out.put("reaction-bot.pokemon.enabled", properties.getPokemon().isEnabled());
-        out.put("reaction-bot.pokemon.overlay.enabled", properties.getPokemon().getOverlay().isEnabled());
-        out.put("reaction-bot.pokemon.overlay.generation", properties.getPokemon().getOverlay().getGeneration());
-        out.put("reaction-bot.pokemon.overlay.mode", safe(properties.getPokemon().getOverlay().getMode()));
-        out.put("reaction-bot.pokemon.overlay.refresh-interval-ms", properties.getPokemon().getOverlay().getRefreshIntervalMs());
-        out.put("reaction-bot.pokemon.overlay.max-pokemon", properties.getPokemon().getOverlay().getMaxPokemon());
-        out.put("reaction-bot.pokemon.overlay.infer-moves", properties.getPokemon().getOverlay().isInferMoves());
+        out.put("reaction-bot.pokemon-overlay.enabled", properties.getPokemonOverlay().isEnabled());
+        out.put("reaction-bot.pokemon-overlay.generation", properties.getPokemonOverlay().getGeneration());
+        out.put("reaction-bot.pokemon-overlay.mode", safe(properties.getPokemonOverlay().getMode()));
+        out.put("reaction-bot.pokemon-overlay.refresh-interval-ms", properties.getPokemonOverlay().getRefreshIntervalMs());
+        out.put("reaction-bot.pokemon-overlay.max-pokemon", properties.getPokemonOverlay().getMaxPokemon());
+        out.put("reaction-bot.pokemon-overlay.infer-moves", properties.getPokemonOverlay().isInferMoves());
         BotProperties.ScreenTranslate st = properties.getScreenTranslate();
         out.put("reaction-bot.screen-translate.source-langs", st.getSourceLangs());
         out.put("reaction-bot.screen-translate.target-lang", safe(st.getTargetLang()));

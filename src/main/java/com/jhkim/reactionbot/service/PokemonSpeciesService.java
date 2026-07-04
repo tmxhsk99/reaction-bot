@@ -113,7 +113,8 @@ public class PokemonSpeciesService {
     public void init() {
         // 세대별 종족값 매핑은 overlay 비활성이어도 로드 (작은 비용). 활성화 시점에 즉시 활용 가능.
         loadPastStatsMappings();
-        if (!properties.getPokemon().isEnabled() || !properties.getPokemon().getOverlay().isEnabled()) {
+        // 오버레이는 pokemon.enabled(발화 컨텍스트 주입)와 독립 — 자체 enabled 만 확인.
+        if (!properties.getPokemonOverlay().isEnabled()) {
             log.info("PokemonSpeciesService: overlay 비활성 — 일어 인덱스 워밍업 생략.");
             return;
         }
