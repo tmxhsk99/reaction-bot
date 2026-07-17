@@ -2,10 +2,12 @@ package com.jhkim.reactionbot.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jhkim.reactionbot.config.BotProperties;
+import com.jhkim.reactionbot.service.ClaudeCliService;
 import com.jhkim.reactionbot.service.LlmOutputFilter;
 import com.jhkim.reactionbot.service.UserConfigService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -35,6 +37,8 @@ public class ConfigController {
     private final UserConfigService userConfig;
     private final LlmOutputFilter outputFilter;
     private final BotProperties properties;
+    // provider=claude-cli 일 때만 빈이 존재 (@ConditionalOnProperty) → ObjectProvider 로 optional 주입.
+    private final ObjectProvider<ClaudeCliService> claudeCli;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** 현재 설정 (시크릿 마스킹). UI가 GET해서 화면에 채움. */
@@ -122,6 +126,34 @@ public class ConfigController {
                 "message", "저장 완료. 즉시 반영됨.",
                 "mappings", mappings.size(),
                 "forbidPatterns", forbid.size());
+    }
+
+    /**
+     * Claude CLI 세션 재로그인 콘솔 열기 (설정 UI 버튼).
+     * 세션 만료 시 봇이 실패 감지 후 자동으로 콘솔을 띄우긴 하지만, 사용자가 미리/즉시
+     * 재연동하고 싶을 때 여기로 수동 트리거. 새 콘솔 창에서 브라우저 인증을 완료하면
+     * 봇은 다음 호출부터 자동 복구된다 (서버 재기동 불필요).
+     */
+    @PostMapping("/claude-login")
+    public Map<String, Object> openClaudeLogin() {
+        ClaudeCliService svc = claudeCli.getIfAvailable();
+        if (svc == null) {
+            return Map.of(
+                    "status", "error",
+                    "message", "현재 실행 중인 LLM provider가 claude-cli가 아닙니다. "
+                            + "provider를 claude-cli로 저장하고 서버 재기동 후 사용하세요.");
+        }
+        try {
+            String exec = svc.openLoginConsole();
+            return Map.of(
+                    "status", "ok",
+                    "message", "로그인 콘솔 창을 띄웠습니다. 그 창에서 인증(브라우저 로그인)을 완료하면 "
+                            + "봇이 다음 호출부터 자동 복구됩니다. 이미 로그인 상태라면 창에서 /login 으로 재인증할 수 있습니다.",
+                    "exec", exec);
+        } catch (Exception e) {
+            log.warn("Claude CLI 로그인 콘솔 열기 실패", e);
+            return Map.of("status", "error", "message", "로그인 콘솔 열기 실패: " + e.getMessage());
+        }
     }
 
     /**

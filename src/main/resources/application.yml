@@ -65,6 +65,7 @@ reaction-bot:
     voice: "ko-KR-SunHiNeural"
     rate: "+10%"
     pitch: "+5Hz"
+    volume: "+0%"                         # 재생 음량. "+50%"=크게, "-30%"=작게 (edge-tts 서버가 합성 단계에서 적용)
     output-dir: "tts-output"
     cleanup-on-startup: true              # 서버 기동 시 tts-output/tts-*.mp3 잔재 일괄 삭제 (강제 종료된 경우 청소)
     cleanup-on-shutdown: true             # 서버 종료 시 tts-output/tts-*.mp3 일괄 삭제
