@@ -238,6 +238,7 @@ public class BotProperties {
         private String voice;
         private String rate;
         private String pitch;
+        private String volume = "+0%";      // edge-tts 볼륨. "+50%"=크게, "-30%"=작게
         private String outputDir;
         private boolean cleanupOnStartup;   // true면 서버 기동 시 잔재 mp3 일괄 삭제
         private boolean cleanupOnShutdown;  // true면 서버 종료 시 mp3 일괄 삭제

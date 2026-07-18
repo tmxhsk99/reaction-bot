@@ -381,6 +381,13 @@
         <label>버전 폴더 자동 탐색 디렉토리 <span class="hint" style="margin-left:6px;">선택</span></label>
         <input type="text" name="reaction-bot.claude-cli.executable-search-dir" placeholder="비워두면 OS 기본 (%APPDATA%\Claude\claude-code)">
         <div class="hint">npm 글로벌 설치 등 비표준 위치면 여기에 디렉토리를, 그리고 위 실행 파일 경로에 절대경로를 직접 적기. 사전 <code>claude</code> 로그인 필수.</div>
+
+        <label style="margin-top:14px;">세션 재로그인 <span class="badge">즉시 적용</span></label>
+        <div class="manage-row">
+          <span class="hint" style="flex:1;">세션이 만료되면 봇이 자동으로 로그인 창을 띄우지만, 여기서 즉시 수동으로 열 수도 있습니다. 새 창에서 브라우저 인증을 완료하면 재기동 없이 자동 복구됩니다.</span>
+          <button type="button" id="claude-login-btn" class="manage-btn">로그인 콘솔 열기</button>
+        </div>
+        <div id="claude-login-msg" class="hint" style="margin-top:6px;"></div>
       </div>
 
       <!-- ─ codex-cli ─ -->
@@ -469,6 +476,23 @@
         <option value="ko-KR-InJoonNeural">ko-KR-InJoonNeural — 남, 중후</option>
         <option value="ko-KR-HyunsuMultilingualNeural">ko-KR-HyunsuMultilingualNeural — 남, 다국어</option>
       </select>
+
+      <label>Volume</label>
+      <select name="reaction-bot.tts.volume">
+        <option value="-50%">-50% — 매우 작게</option>
+        <option value="-30%">-30%</option>
+        <option value="-20%">-20%</option>
+        <option value="-10%">-10%</option>
+        <option value="+0%">+0% — 기본</option>
+        <option value="+10%">+10%</option>
+        <option value="+20%">+20%</option>
+        <option value="+30%">+30%</option>
+        <option value="+50%">+50% — 크게</option>
+        <option value="+100%">+100% — 최대</option>
+      </select>
+      <div class="hint">edge-tts가 합성 단계에서 적용하는 음량. Windows 볼륨 믹서와는 별개.</div>
+
+      <div class="restart-note">⚠ TTS 설정 변경은 서버 재기동 후 적용됩니다.</div>
     </div>
 
     <div class="card">
@@ -944,6 +968,28 @@ restartBtn.addEventListener('click', async () => {
     restartBtn.disabled = false;
     restartBtn.textContent = '서버 재기동';
     saveBtn.disabled = false;
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// claude-cli — 세션 재로그인 콘솔 열기 (즉시 적용, 재기동 불필요)
+// ─────────────────────────────────────────────────────────────
+const claudeLoginBtn = document.getElementById('claude-login-btn');
+const claudeLoginMsg = document.getElementById('claude-login-msg');
+claudeLoginBtn.addEventListener('click', async () => {
+  claudeLoginBtn.disabled = true;
+  claudeLoginMsg.textContent = '로그인 콘솔 여는 중...';
+  try {
+    const res = await fetch('/api/config/claude-login', { method: 'POST' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.status === 'error') {
+      throw new Error(body.message || ('HTTP ' + res.status));
+    }
+    claudeLoginMsg.textContent = body.message + (body.exec ? ' (exec: ' + body.exec + ')' : '');
+  } catch (e) {
+    claudeLoginMsg.textContent = '실패: ' + e.message;
+  } finally {
+    claudeLoginBtn.disabled = false;
   }
 });
 

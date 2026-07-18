@@ -278,25 +278,53 @@ public class ClaudeCliService implements LlmProvider {
      */
     private void tryOpenInteractiveLogin() {
         if (!interactiveLoginShown.compareAndSet(false, true)) return;
-        String os = System.getProperty("os.name", "").toLowerCase();
         String exec = userFacingExecutable();
+        String os = System.getProperty("os.name", "").toLowerCase();
         if (!os.contains("win")) {
             log.error("로그인 콘솔 자동 띄우기는 Windows 전용. 수동으로 실행해주세요: {}", exec);
             return;
         }
         try {
-            // cmd /c start "<title>" cmd /k "<claude.exe>"
-            //  - start: 봇 프로세스에서 분리된 새 콘솔 윈도우 spawn
-            //  - 첫 "" 인자: start 가 그걸 타이틀로 인식 (없으면 다음 인자가 타이틀로 먹힘)
-            //  - cmd /k: claude.exe 종료 후에도 콘솔 유지 → 사용자가 메시지 확인 가능
-            new ProcessBuilder("cmd", "/c", "start", "Claude Code 로그인 필요", "cmd", "/k", exec)
-                    .inheritIO()
-                    .start();
+            spawnLoginConsole(exec);
             log.error("Claude CLI 인증이 풀려 새 콘솔 창에 로그인 모드를 띄웠습니다. "
                     + "그 창에서 인증을 완료하면 봇이 자동 복구됩니다. exec={}", exec);
         } catch (IOException e) {
             log.error("로그인 콘솔 자동 띄우기 실패. 수동으로 실행해주세요: {}", exec, e);
         }
+    }
+
+    /**
+     * 설정 UI의 "로그인 콘솔 열기" 버튼용 수동 진입점.
+     * 사용자 명시 요청이므로 자동 감지 latch와 무관하게 항상 새 콘솔을 띄우고,
+     * 직후 자동 감지가 중복 창을 또 띄우지 않도록 latch 를 세팅한다.
+     * (다음 성공 호출에서 latch reset — 기존 자동 복구 흐름과 동일)
+     *
+     * @return 안내 메시지에 쓸 실행 파일 경로 (PowerShell 복붙 가능 실 경로)
+     * @throws IllegalStateException Windows 가 아닌 OS
+     * @throws IOException           콘솔 spawn 실패
+     */
+    public String openLoginConsole() throws IOException {
+        String exec = userFacingExecutable();
+        String os = System.getProperty("os.name", "").toLowerCase();
+        if (!os.contains("win")) {
+            throw new IllegalStateException("로그인 콘솔 열기는 Windows 전용입니다. 터미널에서 직접 실행해주세요: " + exec);
+        }
+        spawnLoginConsole(exec);
+        interactiveLoginShown.set(true);
+        log.info("설정 UI 요청으로 Claude CLI 로그인 콘솔을 띄웠습니다. exec={}", exec);
+        return exec;
+    }
+
+    /**
+     * cmd /c start "<title>" cmd /k "<claude.exe>"
+     *  - start: 봇 프로세스에서 분리된 새 콘솔 윈도우 spawn
+     *  - 첫 타이틀 인자: 없으면 다음 인자가 타이틀로 먹힘
+     *  - cmd /k: claude.exe 종료 후에도 콘솔 유지 → 사용자가 메시지 확인 가능
+     */
+    private static void spawnLoginConsole(String exec) throws IOException {
+        new ProcessBuilder("cmd", "/c", "start", "Claude Code 로그인", "cmd", "/k", exec)
+                .inheritIO()
+                .start();
     }
 
     /**

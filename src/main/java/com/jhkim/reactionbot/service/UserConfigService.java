@@ -45,6 +45,7 @@ public class UserConfigService {
             "reaction-bot.codex-cli.executable",
             "reaction-bot.codex-cli.api-key",
             "reaction-bot.tts.voice",
+            "reaction-bot.tts.volume",
             "reaction-bot.character.name",
             "reaction-bot.character.streamer-name",
             "reaction-bot.character.use-custom-prompt",
@@ -131,6 +132,7 @@ public class UserConfigService {
         out.put("reaction-bot.codex-cli.executable", safe(properties.getCodexCli().getExecutable()));
         out.put("reaction-bot.codex-cli.api-key", maskSecret(safe(properties.getCodexCli().getApiKey())));
         out.put("reaction-bot.tts.voice", safe(properties.getTts().getVoice()));
+        out.put("reaction-bot.tts.volume", safe(properties.getTts().getVolume()));
         out.put("reaction-bot.character.name", safe(properties.getCharacter().getName()));
         out.put("reaction-bot.character.streamer-name", safe(properties.getCharacter().getStreamerName()));
         out.put("reaction-bot.character.use-custom-prompt", properties.getCharacter().isUseCustomPrompt());

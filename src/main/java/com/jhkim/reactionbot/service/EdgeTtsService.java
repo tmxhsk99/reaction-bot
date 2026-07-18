@@ -59,6 +59,12 @@ public class EdgeTtsService implements TtsService {
         String filename = "tts-" + UUID.randomUUID() + ".mp3";
         Path outputPath = Paths.get(properties.getTts().getOutputDir(), filename);
 
+        // config.yml 로 덮어쓴 값이 빈 문자열일 수 있어 방어. edge-tts는 형식 안 맞으면 실패함.
+        String volume = properties.getTts().getVolume();
+        if (volume == null || volume.isBlank()) {
+            volume = "+0%";
+        }
+
         // 본문(text)은 stdin으로 전달. 명령줄 인자로 넘기면 따옴표 등 특수문자에서
         // OS별 인자 인용이 깨져(특히 Windows의 닫히지 않은 ") 뒤 인자들이 흡수됨.
         ProcessBuilder pb = new ProcessBuilder(
@@ -67,6 +73,7 @@ public class EdgeTtsService implements TtsService {
                 "--voice", properties.getTts().getVoice(),
                 "--rate", properties.getTts().getRate(),
                 "--pitch", properties.getTts().getPitch(),
+                "--volume", volume,
                 "--output", outputPath.toString()
         );
         pb.redirectErrorStream(true);
