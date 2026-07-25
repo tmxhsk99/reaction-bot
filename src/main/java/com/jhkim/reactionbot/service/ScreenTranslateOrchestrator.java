@@ -66,6 +66,10 @@ public class ScreenTranslateOrchestrator {
     private final AtomicReference<String> lastSource = new AtomicReference<>("");
     private final AtomicReference<String> lastTranslated = new AtomicReference<>("");
     private final AtomicBoolean translating = new AtomicBoolean(false);
+    // LLM 호출 구간(stage 1 진입~완료)만 true — UI "번역중…" 배지용. tick 마다 깜빡이지 않도록 translating 과 분리.
+    private final AtomicBoolean llmBusy = new AtomicBoolean(false);
+    // TTS 발화 중 (합성+재생) — UI 스킵 버튼 노출용
+    private final AtomicBoolean ttsSpeaking = new AtomicBoolean(false);
     private final AtomicReference<Instant> lastRun = new AtomicReference<>(Instant.EPOCH);
     private final AtomicReference<String> lastError = new AtomicReference<>(null);
 
@@ -189,6 +193,8 @@ public class ScreenTranslateOrchestrator {
             boolean enabled,
             boolean autoMode,
             boolean autoRuntime,
+            boolean translating,
+            boolean ttsSpeaking,
             String captureMode,
             String cropRegion,
             String lastError,
@@ -223,6 +229,8 @@ public class ScreenTranslateOrchestrator {
                 properties.isScreenTranslateMode(),
                 cfg.isAutoMode(),
                 autoRuntimeEnabled.get(),
+                llmBusy.get(),
+                ttsSpeaking.get(),
                 cfg.getCaptureMode(),
                 cfg.getCropRegion(),
                 lastError.get(),
@@ -424,6 +432,9 @@ public class ScreenTranslateOrchestrator {
 
             // ----- Stage 1: 텍스트 추출 (vision) -----
             // OCR 이 파이프라인에서 가장 어려운 작업 → 기본은 메인 모델 사용 (stage1-use-main-model).
+            // 여기부터 LLM 호출 구간 — UI 에 "번역중…" 배지 표시 (해제는 runOnce finally)
+            llmBusy.set(true);
+            broadcast();
             ParsedTriage triage;
             String stage1Raw = null;
             try {
@@ -591,6 +602,8 @@ public class ScreenTranslateOrchestrator {
                             + "', translated='" + preview(entry.translated(), 80) + "'",
                     hashHex, dPrev, dStable, stage1Raw, triage, stage2Raw);
         } finally {
+            // LLM 구간에 들어갔었다면 배지 해제를 클라이언트에 알림
+            if (llmBusy.getAndSet(false)) broadcast();
             translating.set(false);
         }
     }
@@ -955,6 +968,16 @@ public class ScreenTranslateOrchestrator {
         }
     }
 
+    /**
+     * 현재 재생 중인 TTS 스킵. 큐(latest-wins)에 대기 중인 다음 번역이 있으면 곧바로 이어 재생.
+     * 첫 번역이 잘려 나왔을 때 두 번째(정상) 번역으로 빨리 넘어가는 용도.
+     *
+     * @return provider 가 스킵을 지원하면 true (기본 구현은 false)
+     */
+    public boolean skipTts() {
+        return ttsService.skip();
+    }
+
     private void enqueueTts(String text) {
         pendingTts.set(text);
         ttsSignal.release();
@@ -969,6 +992,8 @@ public class ScreenTranslateOrchestrator {
                     // 아바타(/avatar) 입 동기화 — TTS 시작/종료에 SSE 이벤트 푸시.
                     // ReactionOrchestrator 가 발화할 때와 동일한 통로 → 같은 아바타가 그대로 반응.
                     boolean started = false;
+                    ttsSpeaking.set(true);
+                    broadcast();  // UI 스킵 버튼 노출
                     try {
                         avatarEvents.speakStart();
                         started = true;
@@ -979,6 +1004,8 @@ public class ScreenTranslateOrchestrator {
                         if (started) {
                             try { avatarEvents.speakEnd(); } catch (Exception ignored) {}
                         }
+                        ttsSpeaking.set(false);
+                        broadcast();
                     }
                 }
             } catch (InterruptedException ie) {
