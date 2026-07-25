@@ -971,9 +971,11 @@ public class ScreenTranslateOrchestrator {
     /**
      * 현재 재생 중인 TTS 스킵. 큐(latest-wins)에 대기 중인 다음 번역이 있으면 곧바로 이어 재생.
      * 첫 번역이 잘려 나왔을 때 두 번째(정상) 번역으로 빨리 넘어가는 용도.
+     *
+     * @return provider 가 스킵을 지원하면 true (기본 구현은 false)
      */
-    public void skipTts() {
-        ttsService.skip();
+    public boolean skipTts() {
+        return ttsService.skip();
     }
 
     private void enqueueTts(String text) {

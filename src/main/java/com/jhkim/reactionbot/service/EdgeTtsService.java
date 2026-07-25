@@ -34,7 +34,9 @@ public class EdgeTtsService implements TtsService {
     private final BotProperties properties;
     private final AudioPlayer audioPlayer;
 
-    // skip() 이 세움 — 합성 중 스킵되면 재생 자체를 건너뜀 (재생 중이면 audioPlayer.stop() 이 즉시 중단)
+    // skip() 이 세우고 speak() 종료 시 소비(clear).
+    // speak() 시작 시 리셋하지 않음 — ttsSpeaking 브로드캐스트(스킵 버튼 노출) 직후 ~ speak() 진입
+    // 사이에 눌린 스킵도 유효해야 하기 때문 (리셋하면 그 스킵이 유실됨).
     private volatile boolean skipRequested;
 
     @PostConstruct
@@ -54,19 +56,25 @@ public class EdgeTtsService implements TtsService {
             return;
         }
 
-        skipRequested = false;
-        File outputFile = synthesize(text);
-        if (skipRequested) {
-            log.debug("TTS 스킵 요청 - 합성 완료분 재생 생략");
-            return;
+        try {
+            File outputFile = synthesize(text);
+            if (skipRequested) {
+                log.debug("TTS 스킵 요청 - 합성 완료분 재생 생략");
+                return;
+            }
+            // 위 확인 ~ 재생 시작 사이에 skip() 이 끼어들 수 있음 → player 등록 후 supplier 로 재확인
+            audioPlayer.play(outputFile, () -> skipRequested);
+        } finally {
+            skipRequested = false;  // 이번 발화에서 소비 — 다음 발화로 이월 금지
         }
-        audioPlayer.play(outputFile);
     }
 
     @Override
-    public void skip() {
+    public boolean skip() {
+        // 순서 중요: 플래그를 먼저 세워야 play() 의 재확인이 반드시 감지함
         skipRequested = true;
         audioPlayer.stop();
+        return true;
     }
 
     private File synthesize(String text) {

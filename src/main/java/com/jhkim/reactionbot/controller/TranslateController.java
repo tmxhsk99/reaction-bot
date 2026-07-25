@@ -112,7 +112,10 @@ public class TranslateController {
     /** 현재 재생 중인 TTS 스킵. 대기 중(latest-wins) 번역이 있으면 곧바로 이어 재생됨. */
     @PostMapping("/tts-skip")
     public Map<String, Object> ttsSkip() {
-        orchestrator.skipTts();
+        boolean supported = orchestrator.skipTts();
+        if (!supported) {
+            return Map.of("status", "error", "message", "현재 TTS provider 는 스킵을 지원하지 않습니다");
+        }
         return Map.of("status", "ok");
     }
 

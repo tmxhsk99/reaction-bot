@@ -452,6 +452,8 @@ ttsSkipBtn.addEventListener('click', async () => {
     if (body.status !== 'ok') {
       errEl.textContent = '스킵 실패: ' + (body.message || res.status);
     }
+  } catch (e) {
+    errEl.textContent = '스킵 실패: 네트워크 오류';
   } finally {
     // 스킵 직후 다음 대기 번역이 이어 재생될 수 있으므로 잠깐만 잠금
     setTimeout(() => { ttsSkipBtn.disabled = false; }, 300);
