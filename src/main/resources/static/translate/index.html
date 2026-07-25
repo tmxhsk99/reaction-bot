@@ -52,30 +52,28 @@
   .topbar button:hover { background: #f7dc6f; }
   .topbar button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-  /* 번역중 배지 — 대화 박스 위에 표시 */
+  /* 번역중 배지 — 상단바(자동 버튼 라인)에 상시 자리 차지, 번역중에만 보임 */
   .translating-badge {
-    display: none;
-    max-width: 960px;
-    width: 100%;
-    margin: 0 auto -4px;
+    visibility: hidden;
   }
-  .translating-badge.on { display: block; }
+  .translating-badge.on { visibility: visible; }
   .translating-badge .pill {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     background: #ffffff;
-    border: 3px solid #1a1a1a;
+    border: 2px solid #1a1a1a;
     border-radius: 4px;
-    box-shadow: 3px 3px 0 #1a1a1a;
-    padding: 4px 14px;
+    box-shadow: 2px 2px 0 #1a1a1a;
+    padding: 2px 10px;
     font-family: Galmuri11, sans-serif;
-    font-size: 16px;
+    font-size: 14px;
     color: #1a1a1a;
+    white-space: nowrap;
   }
   .translating-badge .orb {
-    width: 10px;
-    height: 10px;
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
     border: 2px solid #1a1a1a;
     background: #d62828;
@@ -259,19 +257,18 @@
     <span id="mode-label">대기 중…</span>
     <span class="grow"></span>
     <span id="error" class="err"></span>
-    <button id="tts-skip-btn" type="button" class="skip" style="display:none"
+    <span class="translating-badge" id="translating-badge">
+      <span class="pill">
+        <span class="orb"></span>번역중<span class="dots"><span>.</span><span>.</span><span>.</span></span>
+      </span>
+    </span>
+    <button id="tts-skip-btn" type="button" class="skip" style="visibility:hidden"
             title="현재 재생 중인 TTS 중단 — 대기 중인 다음 번역이 있으면 바로 이어 재생">⏭ TTS 스킵</button>
     <button id="auto-toggle-btn" type="button" title="자동 번역 ON/OFF — 이동/전투 중엔 OFF 권장">자동 …</button>
     <button id="manual-btn" type="button">번역 (수동)</button>
     <a href="/">← 홈</a>
     <a href="/translate/debug">진단 →</a>
     <a href="/translate/history">히스토리 →</a>
-  </div>
-
-  <div class="translating-badge" id="translating-badge">
-    <span class="pill">
-      <span class="orb"></span>번역중<span class="dots"><span>.</span><span>.</span><span>.</span></span>
-    </span>
   </div>
 
   <div class="dialog" id="dialog">
@@ -337,8 +334,8 @@ function render(st) {
   // 번역중 배지 (stage 1~2 LLM 호출 구간)
   translatingBadge.classList.toggle('on', !!st.translating);
 
-  // TTS 스킵 버튼 — 발화 중에만 노출
-  ttsSkipBtn.style.display = st.ttsSpeaking ? '' : 'none';
+  // TTS 스킵 버튼 — 발화 중에만 보임 (자리는 상시 확보해 레이아웃 고정)
+  ttsSkipBtn.style.visibility = st.ttsSpeaking ? 'visible' : 'hidden';
 
   // 최근 번역 리스트
   renderRecent(st.recent || []);
