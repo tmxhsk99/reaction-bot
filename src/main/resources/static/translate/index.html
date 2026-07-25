@@ -52,6 +52,56 @@
   .topbar button:hover { background: #f7dc6f; }
   .topbar button:disabled { opacity: 0.5; cursor: not-allowed; }
 
+  /* 번역중 배지 — 대화 박스 위에 표시 */
+  .translating-badge {
+    display: none;
+    max-width: 960px;
+    width: 100%;
+    margin: 0 auto -4px;
+  }
+  .translating-badge.on { display: block; }
+  .translating-badge .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: #ffffff;
+    border: 3px solid #1a1a1a;
+    border-radius: 4px;
+    box-shadow: 3px 3px 0 #1a1a1a;
+    padding: 4px 14px;
+    font-family: Galmuri11, sans-serif;
+    font-size: 16px;
+    color: #1a1a1a;
+  }
+  .translating-badge .orb {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 2px solid #1a1a1a;
+    background: #d62828;
+    animation: orb-pulse 0.8s ease-in-out infinite;
+  }
+  @keyframes orb-pulse {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.4); }
+  }
+  .translating-badge .dots span {
+    animation: dot-blink 1.2s infinite both;
+  }
+  .translating-badge .dots span:nth-child(2) { animation-delay: 0.2s; }
+  .translating-badge .dots span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes dot-blink {
+    0%, 80%, 100% { opacity: 0.15; }
+    40%           { opacity: 1; }
+  }
+
+  /* TTS 스킵 버튼 — 재생 중에만 노출 */
+  .topbar button.skip {
+    background: #ff6b6b;
+    color: #1a1a1a;
+  }
+  .topbar button.skip:hover { background: #ff8787; }
+
   /* 대화 박스 (포켓몬 스타일) */
   .dialog {
     background: #ffffff;
@@ -209,11 +259,19 @@
     <span id="mode-label">대기 중…</span>
     <span class="grow"></span>
     <span id="error" class="err"></span>
+    <button id="tts-skip-btn" type="button" class="skip" style="display:none"
+            title="현재 재생 중인 TTS 중단 — 대기 중인 다음 번역이 있으면 바로 이어 재생">⏭ TTS 스킵</button>
     <button id="auto-toggle-btn" type="button" title="자동 번역 ON/OFF — 이동/전투 중엔 OFF 권장">자동 …</button>
     <button id="manual-btn" type="button">번역 (수동)</button>
     <a href="/">← 홈</a>
     <a href="/translate/debug">진단 →</a>
     <a href="/translate/history">히스토리 →</a>
+  </div>
+
+  <div class="translating-badge" id="translating-badge">
+    <span class="pill">
+      <span class="orb"></span>번역중<span class="dots"><span>.</span><span>.</span><span>.</span></span>
+    </span>
   </div>
 
   <div class="dialog" id="dialog">
@@ -247,6 +305,8 @@ const recentListEl = $('recent-list');
 const errEl = $('error');
 const pageIdxEl = $('page-idx');
 const modeLabel = $('mode-label');
+const translatingBadge = $('translating-badge');
+const ttsSkipBtn = $('tts-skip-btn');
 
 let cur = null;   // 현재 state
 
@@ -273,6 +333,12 @@ function render(st) {
       autoToggleBtn.className = 'toggle-off';
     }
   }
+
+  // 번역중 배지 (stage 1~2 LLM 호출 구간)
+  translatingBadge.classList.toggle('on', !!st.translating);
+
+  // TTS 스킵 버튼 — 발화 중에만 노출
+  ttsSkipBtn.style.display = st.ttsSpeaking ? '' : 'none';
 
   // 최근 번역 리스트
   renderRecent(st.recent || []);
@@ -377,6 +443,20 @@ function renderRecent(items) {
     recentListEl.appendChild(row);
   }
 }
+
+ttsSkipBtn.addEventListener('click', async () => {
+  ttsSkipBtn.disabled = true;
+  try {
+    const res = await fetch('/api/translate/tts-skip', { method: 'POST' });
+    const body = await res.json().catch(() => ({}));
+    if (body.status !== 'ok') {
+      errEl.textContent = '스킵 실패: ' + (body.message || res.status);
+    }
+  } finally {
+    // 스킵 직후 다음 대기 번역이 이어 재생될 수 있으므로 잠깐만 잠금
+    setTimeout(() => { ttsSkipBtn.disabled = false; }, 300);
+  }
+});
 
 autoToggleBtn.addEventListener('click', async () => {
   autoToggleBtn.disabled = true;

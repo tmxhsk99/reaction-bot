@@ -34,6 +34,9 @@ public class EdgeTtsService implements TtsService {
     private final BotProperties properties;
     private final AudioPlayer audioPlayer;
 
+    // skip() 이 세움 — 합성 중 스킵되면 재생 자체를 건너뜀 (재생 중이면 audioPlayer.stop() 이 즉시 중단)
+    private volatile boolean skipRequested;
+
     @PostConstruct
     public void init() throws IOException {
         Path dir = Paths.get(properties.getTts().getOutputDir());
@@ -51,8 +54,19 @@ public class EdgeTtsService implements TtsService {
             return;
         }
 
+        skipRequested = false;
         File outputFile = synthesize(text);
+        if (skipRequested) {
+            log.debug("TTS 스킵 요청 - 합성 완료분 재생 생략");
+            return;
+        }
         audioPlayer.play(outputFile);
+    }
+
+    @Override
+    public void skip() {
+        skipRequested = true;
+        audioPlayer.stop();
     }
 
     private File synthesize(String text) {

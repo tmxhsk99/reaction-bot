@@ -17,14 +17,31 @@ import java.io.FileInputStream;
 @Component
 public class AudioPlayer {
 
+    // 현재 재생 중인 player — stop() 이 다른 스레드에서 close() 호출 (스킵 기능)
+    private volatile Player current;
+
     public void play(File mp3File) {
         try (BufferedInputStream bis = new BufferedInputStream(new FileInputStream(mp3File))) {
             log.debug("재생 시작: {}", mp3File.getName());
             Player player = new Player(bis);
-            player.play();  // 끝날 때까지 블로킹
+            current = player;
+            player.play();  // 끝날 때까지 블로킹 (close() 되면 즉시 반환)
             log.debug("재생 완료: {}", mp3File.getName());
         } catch (Exception e) {
             throw new RuntimeException("오디오 재생 실패: " + mp3File, e);
+        } finally {
+            current = null;
+        }
+    }
+
+    /** 현재 재생 중인 오디오 중단. 재생 중이 아니면 no-op. */
+    public void stop() {
+        Player p = current;
+        if (p != null) {
+            try {
+                p.close();  // play() 블로킹이 풀림
+                log.debug("재생 스킵 요청 - player close");
+            } catch (Exception ignored) {}
         }
     }
 }

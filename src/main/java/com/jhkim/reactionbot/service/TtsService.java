@@ -6,4 +6,10 @@ public interface TtsService {
      * 재생이 끝날 때까지 블로킹.
      */
     void speak(String text);
+
+    /**
+     * 현재 진행 중인 발화를 중단. 합성 중(재생 전)이면 재생 자체를 건너뜀.
+     * 진행 중인 발화가 없으면 no-op.
+     */
+    default void skip() {}
 }
