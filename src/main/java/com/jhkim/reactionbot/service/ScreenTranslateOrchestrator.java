@@ -925,30 +925,29 @@ public class ScreenTranslateOrchestrator {
 
     // ────────────── line split ──────────────
 
+    // 한 줄 최대 글자 수 (오버레이 대화박스 960px · Galmuri11 24px 기준 한 줄 분량)
+    private static final int MAX_LINE_CHARS = 40;
+
     static List<String> splitLines(String text) {
         if (text == null || text.isBlank()) return List.of();
+        // 문장 단위로 줄을 끊으면 짧은 줄이 많아져 페이지 수가 불필요하게 늘어난다.
+        // 개행·문장 경계 무시하고 전체를 이어 붙인 뒤, 한 줄을 최대한 채워서 자른다.
+        String flat = text.replaceAll("\\s+", " ").trim();
         List<String> out = new ArrayList<>();
-        for (String paragraph : text.split("\\R")) {
-            paragraph = paragraph.trim();
-            if (paragraph.isEmpty()) continue;
-            String[] sentences = paragraph.split("(?<=[.!?。！？])\\s+");
-            for (String s : sentences) {
-                s = s.trim();
-                if (s.isEmpty()) continue;
-                while (s.length() > 40) {
-                    int cut = preferSpaceCut(s, 40);
-                    out.add(s.substring(0, cut).trim());
-                    s = s.substring(cut).trim();
-                }
-                if (!s.isEmpty()) out.add(s);
-            }
+        while (flat.length() > MAX_LINE_CHARS) {
+            int cut = preferSpaceCut(flat, MAX_LINE_CHARS);
+            out.add(flat.substring(0, cut).trim());
+            flat = flat.substring(cut).trim();
         }
+        if (!flat.isEmpty()) out.add(flat);
         return out;
     }
 
     private static int preferSpaceCut(String s, int maxLen) {
+        // 띄어쓰기가 있으면 반드시 공백에서 자른다. 40자 안에 공백이 아예 없을 때만
+        // (일본어처럼 공백 없는 텍스트) 단어 중간 하드컷.
         int idx = s.lastIndexOf(' ', maxLen);
-        return (idx >= 20) ? idx : maxLen;
+        return (idx > 0) ? idx : maxLen;
     }
 
     // ────────────── SSE / TTS ──────────────
