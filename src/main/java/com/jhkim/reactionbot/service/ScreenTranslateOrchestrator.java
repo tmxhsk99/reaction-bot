@@ -438,7 +438,11 @@ public class ScreenTranslateOrchestrator {
                                         hashHex, distFromPrev, null, null, null, null);
                                 return;
                             }
-                            // 한도 초과 — 대화창 내 상시 애니메이션(초상화 등)으로 판단하고 통과
+                            // 한도 초과 — 대화창 내 상시 애니메이션(초상화 등)으로 판단하고 통과.
+                            // stableTicks 를 미리 채워 이번 tick 에 아래 안정 게이트를 바로 통과시킴.
+                            // (안 채우면 minStableTicks>1 일 때 다음 tick 에 다시 typing-skip 으로
+                            //  떨어져 streak 0부터 반복 → 영원히 진행 못 함)
+                            stableTicks.set(Math.max(1, cfg.getMinStableTicks()) - 1);
                         }
                         // overlap ≥ 임계: 같은 자리 반복 변화(깜빡이 커서) → 안정으로 간주하고 통과
                     }
@@ -619,11 +623,15 @@ public class ScreenTranslateOrchestrator {
             }
 
             // ----- 상태 갱신 -----
-            // 이어쓰기(sourceGrew) 완성본이면 직전 부분 번역을 "대체" — 최근 목록/히스토리에
+            // 이어쓰기 완성본이면 직전 부분 번역을 "대체" — 최근 목록/히스토리에
             // 부분+완성 두 건이 남지 않게 하고, 부분 번역 TTS 가 재생 중이면 끊고 완성본을 재생.
+            // 판정은 대체 대상인 prevEntry.source() 와 직접 비교 — lastSource 는 translated-dedup
+            // 분기에서 currentEntry 갱신 없이 먼저 바뀔 수 있어(desync) 진짜 이어쓰기를 놓친다.
             TranslateEntry prevEntry = currentEntry.get();
-            boolean supersede = sourceGrew && prevEntry != null
-                    && normalizeForDedup(prevEntry.source()).equals(normLastSrc);
+            String normPrevSrc = prevEntry == null ? "" : normalizeForDedup(prevEntry.source());
+            boolean supersede = !normPrevSrc.isEmpty()
+                    && normSrc.length() > normPrevSrc.length()
+                    && normSrc.startsWith(normPrevSrc);
             lastSource.set(triage.source);
             lastTranslated.set(translated);
             TranslateEntry entry = new TranslateEntry(
@@ -654,7 +662,8 @@ public class ScreenTranslateOrchestrator {
                 String visible = visibleTextOnPageZero(entry, cfg.getLinesPerPage());
                 if (!visible.isBlank()) {
                     // 부분 번역이 아직 발화 중이면 끊고 완성본으로 바로 넘어감.
-                    // (발화 중이 아닐 때 skip() 하면 플래그가 남아 다음 발화를 죽이므로 조건 필수)
+                    // 발화가 이미 자연 종료된 직후에 skip() 이 늦게 도착하는 레이스는
+                    // ttsLoop 이 새 발화 시작 전에 clearSkip() 으로 청소하므로 안전.
                     if (supersede && ttsSpeaking.get()) ttsService.skip();
                     enqueueTts(visible);
                     ttsEnqueuedCount.incrementAndGet();
@@ -1062,6 +1071,9 @@ public class ScreenTranslateOrchestrator {
                 ttsSignal.acquire();
                 String text = pendingTts.getAndSet(null);
                 if (text != null && !text.isBlank()) {
+                    // 직전 발화가 자연 종료된 뒤 늦게 도착한 skip(supersede 경로의 레이스)이
+                    // 이 발화를 죽이지 않도록 이월된 스킵 플래그 청소. 이 시점 이후의 스킵은 유효.
+                    ttsService.clearSkip();
                     // 아바타(/avatar) 입 동기화 — TTS 시작/종료에 SSE 이벤트 푸시.
                     // ReactionOrchestrator 가 발화할 때와 동일한 통로 → 같은 아바타가 그대로 반응.
                     boolean started = false;

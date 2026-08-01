@@ -16,4 +16,12 @@ public interface TtsService {
     default boolean skip() {
         return false;
     }
+
+    /**
+     * 이월된 스킵 요청 제거. 새 발화 lifecycle 시작 시점에 호출 —
+     * 직전 발화가 자연 종료된 뒤 늦게 도착한 skip() 이 다음 발화를 죽이는 것 방지.
+     * 기본 구현은 no-op.
+     */
+    default void clearSkip() {
+    }
 }
