@@ -32,10 +32,12 @@ import java.util.regex.Pattern;
  * 화면 번역 모드 핵심 파이프라인.
  *
  * 흐름 (auto mode, 토글 ON):
- *   tick → capture → 프레임 안정성 체크 (min-stable-ticks 연속 안정일 때만 통과 — 타자기 연출 대기)
+ *   tick → capture → 프레임 안정성 체크 (dHash 이동 감지 + 픽셀 단위 타자기 연출 감지,
+ *                     min-stable-ticks 연속 안정일 때만 통과)
  *        → lastStable 과 hash-dedup-threshold 이상 다를 때만 stage 1 호출
  *        → stage 1 (기본 메인 모델, vision) → SKIP 또는 {speaker, source, lang}
- *        → source/translated 유사도 dedup (직전 source 의 "이어쓰기"면 dedup 우회하고 재번역)
+ *        → source/translated 유사도 dedup (직전 source 의 "이어쓰기"면 dedup 우회하고 재번역,
+ *          완성본은 부분 번역 엔트리를 대체 + 재생 중이던 부분 TTS 스킵)
  *        → stage 2 (메인 모델, text) → translated
  *        → 상태/SSE/히스토리/TTS 큐 (latest-wins)
  *
@@ -80,6 +82,16 @@ public class ScreenTranslateOrchestrator {
     private final AtomicBoolean hasLastStableHash = new AtomicBoolean(false);
     // 연속 안정 tick 카운터 — 타자기 연출 중간 캡처 방지 (cfg.minStableTicks 참조)
     private final AtomicInteger stableTicks = new AtomicInteger(0);
+    // 직전 프레임의 128x72 그레이스케일 — 픽셀 단위 미세 변화(타자기 연출) 감지용.
+    // dHash 는 글자 몇 개 추가를 못 봐서 이것으로 보완 (cfg.pixelDiffMinChanged 참조)
+    private final AtomicReference<int[]> lastFrameGray = new AtomicReference<>(null);
+    // 직전 tick 의 변화 픽셀 위치 — 깜빡이 커서(같은 자리 반복)와 타이핑(새 영역) 구분용
+    private final AtomicReference<java.util.BitSet> lastChangedMask = new AtomicReference<>(null);
+    // 연속 typing-skip 횟수 — 대화창 내 상시 애니메이션(초상화 등)으로 영원히 대기하는 것 방지
+    private final AtomicInteger typingStreak = new AtomicInteger(0);
+    private static final int TYPING_STREAK_LIMIT = 6;
+    // 변화 픽셀의 이 비율 이상이 직전 변화 위치와 겹치면 "같은 자리 반복"(깜빡이 커서)으로 보고 통과
+    private static final double PERIODIC_OVERLAP_RATIO = 0.6;
 
     // ----- 자동 토글 (런타임) -----
     // cfg.autoMode=false 면 그 자체로 비활성. cfg.autoMode=true 일 때 사용자가 일시 토글.
@@ -366,8 +378,9 @@ public class ScreenTranslateOrchestrator {
                 return;
             }
 
-            // ----- dHash 안정성 체크 (수동이면 우회) -----
+            // ----- dHash + 픽셀 안정성 체크 (수동이면 우회) -----
             long currentHash = frameHash.dhash(cap.image());
+            int[] currentGray = frameHash.grayGrid(cap.image());
             String hashHex = String.format("%016x", currentHash);
             int thresh = Math.max(0, cfg.getHashStabilityThreshold());
             Integer dPrev = null, dStable = null;
@@ -375,6 +388,7 @@ public class ScreenTranslateOrchestrator {
                 // 첫 프레임이면 기록만
                 if (!hasLastFrameHash.getAndSet(true)) {
                     lastFrameHash.set(currentHash);
+                    lastFrameGray.set(currentGray);
                     recordDiag("first-frame", "첫 프레임 기록만 (다음 tick 부터 안정성 비교)",
                             hashHex, null, null, null, null, null);
                     return;
@@ -383,15 +397,52 @@ public class ScreenTranslateOrchestrator {
                 int distFromPrev = frameHash.hamming(currentHash, prevFrame);
                 dPrev = distFromPrev;
                 lastFrameHash.set(currentHash);
+                int[] prevGray = lastFrameGray.getAndSet(currentGray);
 
                 // (1) 화면 이동/변화 중 — 직전 프레임과 너무 다르면 stable 아님 → 호출 X
                 if (cfg.isRequireFrameStability() && distFromPrev > thresh) {
                     stableTicks.set(0);
+                    typingStreak.set(0);
+                    lastChangedMask.set(null);
                     recordDiag("movement-skip",
                             "프레임 변화 중 — hamming(prev)=" + distFromPrev + " > 임계 " + thresh
                                     + ". 화면이 안정되길 기다림. (이동·전투·애니메이션 중일 가능성)",
                             hashHex, distFromPrev, null, null, null, null);
                     return;
+                }
+
+                // (1.2) 픽셀 단위 미세 변화 — dHash 로는 안 보이는 타자기 연출(글자 몇 개 추가) 감지.
+                // 대사가 아직 출력 중인데 "안정"으로 오판해 앞부분만 번역하는 것 방지.
+                // 단, 대화창 깜빡이 커서(▼)처럼 "같은 자리 반복 변화"는 텍스트 완료 신호이므로 통과.
+                int pixThresh = Math.max(0, cfg.getPixelDiffMinChanged());
+                if (cfg.isRequireFrameStability() && pixThresh > 0) {
+                    java.util.BitSet mask = frameHash.changedMask(prevGray, currentGray);
+                    java.util.BitSet prevMask = lastChangedMask.getAndSet(mask);
+                    int pixChanged = mask.cardinality();
+                    if (pixChanged > pixThresh) {
+                        double overlap = 0;
+                        if (prevMask != null && !prevMask.isEmpty()) {
+                            java.util.BitSet inter = (java.util.BitSet) mask.clone();
+                            inter.and(prevMask);
+                            overlap = inter.cardinality() / (double) pixChanged;
+                        }
+                        if (overlap < PERIODIC_OVERLAP_RATIO) {
+                            int streak = typingStreak.incrementAndGet();
+                            if (streak <= TYPING_STREAK_LIMIT) {
+                                stableTicks.set(0);
+                                recordDiag("typing-skip",
+                                        "픽셀 변화 " + pixChanged + " > 임계 " + pixThresh
+                                                + " (직전 변화와 겹침 " + String.format("%.0f%%", overlap * 100)
+                                                + ", 연속 " + streak + "/" + TYPING_STREAK_LIMIT
+                                                + ") — 타자기 연출로 판단, 텍스트 출력 완료 대기.",
+                                        hashHex, distFromPrev, null, null, null, null);
+                                return;
+                            }
+                            // 한도 초과 — 대화창 내 상시 애니메이션(초상화 등)으로 판단하고 통과
+                        }
+                        // overlap ≥ 임계: 같은 자리 반복 변화(깜빡이 커서) → 안정으로 간주하고 통과
+                    }
+                    typingStreak.set(0);
                 }
 
                 // (1.5) 연속 안정 tick 부족 — 타자기 연출로 텍스트가 아직 출력 중일 수 있음 → 대기.
@@ -423,8 +474,9 @@ public class ScreenTranslateOrchestrator {
                 // 새 안정 상태 진입 — lastStableHash 는 stage 1/2 결과를 확정한 뒤 commit.
                 // (LLM 호출이 transient 실패하면 같은 프레임을 다음 tick 에서 다시 시도 가능)
             } else {
-                // 수동이면 이후 hash 비교의 기준점 갱신
+                // 수동이면 이후 hash/픽셀 비교의 기준점 갱신
                 lastFrameHash.set(currentHash);
+                lastFrameGray.set(currentGray);
                 lastStableHash.set(currentHash);
                 hasLastFrameHash.set(true);
                 hasLastStableHash.set(true);
@@ -567,6 +619,11 @@ public class ScreenTranslateOrchestrator {
             }
 
             // ----- 상태 갱신 -----
+            // 이어쓰기(sourceGrew) 완성본이면 직전 부분 번역을 "대체" — 최근 목록/히스토리에
+            // 부분+완성 두 건이 남지 않게 하고, 부분 번역 TTS 가 재생 중이면 끊고 완성본을 재생.
+            TranslateEntry prevEntry = currentEntry.get();
+            boolean supersede = sourceGrew && prevEntry != null
+                    && normalizeForDedup(prevEntry.source()).equals(normLastSrc);
             lastSource.set(triage.source);
             lastTranslated.set(translated);
             TranslateEntry entry = new TranslateEntry(
@@ -581,24 +638,31 @@ public class ScreenTranslateOrchestrator {
             currentEntry.set(entry);
             pageIndex.set(0);
             lastError.set(null);
-            pushRecent(entry, cfg.getRecentBufferSize());
+            if (supersede) replaceRecent(prevEntry.id(), entry, cfg.getRecentBufferSize());
+            else pushRecent(entry, cfg.getRecentBufferSize());
             entriesProduced.incrementAndGet();
             commitStableHash(currentHash, force);
             broadcast();
 
-            historyService.append(new TranslationHistoryService.HistoryEntry(
+            TranslationHistoryService.HistoryEntry hist = new TranslationHistoryService.HistoryEntry(
                     entry.ts(), entry.speaker(), entry.source(), entry.translated(),
-                    entry.sourceLang(), entry.targetLang()));
+                    entry.sourceLang(), entry.targetLang());
+            if (supersede) historyService.replaceLastIfSource(hist, prevEntry.source());
+            else historyService.append(hist);
 
             if (cfg.isTtsEnabled()) {
                 String visible = visibleTextOnPageZero(entry, cfg.getLinesPerPage());
                 if (!visible.isBlank()) {
+                    // 부분 번역이 아직 발화 중이면 끊고 완성본으로 바로 넘어감.
+                    // (발화 중이 아닐 때 skip() 하면 플래그가 남아 다음 발화를 죽이므로 조건 필수)
+                    if (supersede && ttsSpeaking.get()) ttsService.skip();
                     enqueueTts(visible);
                     ttsEnqueuedCount.incrementAndGet();
                 }
             }
             recordDiag("ok",
-                    "번역 완료 — speaker='" + (entry.speaker() == null ? "" : entry.speaker())
+                    (supersede ? "이어쓰기 완성본으로 부분 번역 대체 — " : "번역 완료 — ")
+                            + "speaker='" + (entry.speaker() == null ? "" : entry.speaker())
                             + "', translated='" + preview(entry.translated(), 80) + "'",
                     hashHex, dPrev, dStable, stage1Raw, triage, stage2Raw);
         } finally {
@@ -619,6 +683,16 @@ public class ScreenTranslateOrchestrator {
     private void pushRecent(TranslateEntry entry, int cap) {
         int max = Math.max(1, cap);
         synchronized (recentLock) {
+            recent.addFirst(entry);
+            while (recent.size() > max) recent.pollLast();
+        }
+    }
+
+    /** 이어쓰기 대체: 부분 번역(oldId)을 목록에서 빼고 완성본을 맨 앞에. */
+    private void replaceRecent(String oldId, TranslateEntry entry, int cap) {
+        int max = Math.max(1, cap);
+        synchronized (recentLock) {
+            recent.removeIf(e -> e.id().equals(oldId));
             recent.addFirst(entry);
             while (recent.size() > max) recent.pollLast();
         }
