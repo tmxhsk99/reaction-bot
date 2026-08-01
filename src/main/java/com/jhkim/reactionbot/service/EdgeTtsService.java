@@ -93,9 +93,10 @@ public class EdgeTtsService implements TtsService {
                 properties.getTts().getPythonExecutable(),
                 SCRIPT_PATH,
                 "--voice", properties.getTts().getVoice(),
-                "--rate", properties.getTts().getRate(),
-                "--pitch", properties.getTts().getPitch(),
-                "--volume", volume,
+                // "-30%" 같은 음수 값은 argparse가 별도 옵션으로 오해하므로 --opt=value 형태로 전달
+                "--rate=" + properties.getTts().getRate(),
+                "--pitch=" + properties.getTts().getPitch(),
+                "--volume=" + volume,
                 "--output", outputPath.toString()
         );
         pb.redirectErrorStream(true);
