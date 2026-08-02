@@ -95,6 +95,42 @@ public class TranslationHistoryService {
         }
     }
 
+    /**
+     * 타자기 연출 이어쓰기 대체용: 해당 일자 파일의 마지막 엔트리 source 가 supersededSource
+     * (부분 대사)와 같으면 그 줄을 entry 로 교체, 아니면 그냥 append.
+     * (부분 번역 + 완성본이 히스토리에 중복으로 남는 것 방지)
+     */
+    public void replaceLastIfSource(HistoryEntry entry, String supersededSource) {
+        writeLock.lock();
+        try {
+            Path file = fileForDate(bucketDate(entry));
+            if (Files.isRegularFile(file) && supersededSource != null) {
+                List<String> lines = new ArrayList<>(Files.readAllLines(file, StandardCharsets.UTF_8));
+                while (!lines.isEmpty() && lines.get(lines.size() - 1).isBlank()) {
+                    lines.remove(lines.size() - 1);
+                }
+                if (!lines.isEmpty()) {
+                    try {
+                        HistoryEntry last = objectMapper.readValue(lines.get(lines.size() - 1), HistoryEntry.class);
+                        if (supersededSource.equals(last.source())) {
+                            lines.set(lines.size() - 1, objectMapper.writeValueAsString(entry));
+                            Files.write(file, lines, StandardCharsets.UTF_8);
+                            return;
+                        }
+                    } catch (Exception parseErr) {
+                        log.debug("히스토리 마지막 줄 파싱 실패 — append 폴백: {}", parseErr.getMessage());
+                    }
+                }
+            }
+        } catch (IOException e) {
+            log.warn("히스토리 replaceLastIfSource 실패 — append 폴백: {}", e.getMessage());
+        } finally {
+            writeLock.unlock();
+        }
+        // 마지막 줄이 부분 대사가 아니거나(날짜 넘어감 등) 읽기 실패 → 일반 append
+        append(entry);
+    }
+
     /** 엔트리의 ts(ISO 8601 UTC) 를 시스템 zone 으로 변환해 일자 산출. 실패 시 currentDate() 폴백. */
     private String bucketDate(HistoryEntry entry) {
         try {

@@ -77,6 +77,13 @@ public class EdgeTtsService implements TtsService {
         return true;
     }
 
+    @Override
+    public void clearSkip() {
+        // 발화가 자연 종료된 뒤 늦게 도착한 skip() 은 speak() 의 finally 이후라 플래그가
+        // 다음 발화까지 남는다. 새 발화 시작 시점(호출자 발화 루프)에 이걸 청소.
+        skipRequested = false;
+    }
+
     private File synthesize(String text) {
         String filename = "tts-" + UUID.randomUUID() + ".mp3";
         Path outputPath = Paths.get(properties.getTts().getOutputDir(), filename);
@@ -93,9 +100,10 @@ public class EdgeTtsService implements TtsService {
                 properties.getTts().getPythonExecutable(),
                 SCRIPT_PATH,
                 "--voice", properties.getTts().getVoice(),
-                "--rate", properties.getTts().getRate(),
-                "--pitch", properties.getTts().getPitch(),
-                "--volume", volume,
+                // "-30%" 같은 음수 값은 argparse가 별도 옵션으로 오해하므로 --opt=value 형태로 전달
+                "--rate=" + properties.getTts().getRate(),
+                "--pitch=" + properties.getTts().getPitch(),
+                "--volume=" + volume,
                 "--output", outputPath.toString()
         );
         pb.redirectErrorStream(true);

@@ -255,7 +255,7 @@
     <button id="tts-skip-btn" type="button" class="skip" style="visibility:hidden"
             title="현재 재생 중인 TTS 중단 — 대기 중인 다음 번역이 있으면 바로 이어 재생">⏭ TTS 스킵</button>
     <button id="auto-toggle-btn" type="button" title="자동 번역 ON/OFF — 이동/전투 중엔 OFF 권장">자동 …</button>
-    <button id="manual-btn" type="button">번역 (수동)</button>
+    <button id="manual-btn" type="button" title="단축키: Space 또는 Enter (이 창에 포커스 있을 때)">번역 (수동) ⌨Space/Enter</button>
     <a href="/">← 홈</a>
     <a href="/translate/debug">진단 →</a>
     <a href="/translate/history">히스토리 →</a>
@@ -466,7 +466,7 @@ manualBtn.addEventListener('click', async () => {
   } finally {
     setTimeout(() => {
       manualBtn.disabled = false;
-      manualBtn.textContent = '번역 (수동)';
+      manualBtn.textContent = '번역 (수동) ⌨Space/Enter';
     }, 1500);
   }
 });
@@ -480,7 +480,17 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.key === 'ArrowLeft' && !prevBtn.disabled) postPage('prev');
   else if (e.key === 'ArrowRight' && !nextBtn.disabled) postPage('next');
-  else if (e.key === ' ') { e.preventDefault(); manualBtn.click(); }
+  else if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); manualBtn.click(); }
+});
+
+// 마우스 클릭 후 버튼에 포커스가 남으면 이후 Space/Enter 가 그 버튼을 다시 눌러버림
+// (예: 자동 토글 클릭 후 Space → 번역 대신 토글) → 클릭 즉시 blur 해서 단축키 항상 유효하게.
+// 단, 키보드(Enter/Space) 활성화로 합성된 click(detail=0)은 blur 하지 않음 — 키보드
+// 사용자의 포커스 표시 유지. instanceof Element 는 버튼 내 SVG 아이콘 클릭도 포괄.
+document.addEventListener('click', (e) => {
+  if (e.detail === 0) return;
+  const b = e.target instanceof Element ? e.target.closest('button') : null;
+  if (b) b.blur();
 });
 
 loadInitial();

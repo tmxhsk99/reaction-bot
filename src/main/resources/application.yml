@@ -187,6 +187,7 @@ reaction-bot:
     hash-stability-threshold: 10    # dHash hamming 임계. 이 이하면 같은 화면. 미세 노이즈 흡수
     require-frame-stability: true   # true=프레임이 안정(직전과 유사)할 때만 LLM 호출. 이동/카메라워크 비용 절감
     min-stable-ticks: 2             # 연속 N tick 안정 시에만 추출 호출. 대화창 타자기 연출 중간 캡처(부분 번역) 방지
+    pixel-diff-min-changed: 8       # 128x72 그레이 비교에서 변한 픽셀 수 > 이 값이면 타이핑 중으로 보고 대기. dHash 사각지대 보완. 0=비활성
     hash-dedup-threshold: 4         # "이미 처리한 화면" 재번역 판정 임계. stability 임계보다 작게 — 텍스트 증가 감지용
     stage1-use-main-model: true     # stage1(화면 텍스트 추출)에 메인 모델 사용. false=triage 모델(저렴하지만 OCR 약함)
     translation-dedup-similarity: 0.85  # 직전 번역과 유사도 ≥ 이 값이면 중복으로 보고 TTS/state/history 스킵
